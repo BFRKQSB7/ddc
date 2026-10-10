@@ -320,6 +320,20 @@ fn decompile_class_impl(
             obscured_map.remove(d);
         }
     }
+    // Own field names in DISPLAY space (the registry may have renamed
+    // them — the body renders display names, the capture checks must
+    // compare against the same space): value-namespace capture guards
+    // for the static-import escape.
+    let own_field_names: jdc_core::FxHashSet<String> = class
+        .static_fields
+        .iter()
+        .chain(class.instance_fields.iter())
+        .map(|f| {
+            jdc_core::rename::field_display(&class.name, &f.name, &f.desc)
+                .map(|d| d.to_string())
+                .unwrap_or_else(|| java_ident(&f.name).into_owned())
+        })
+        .collect();
     set_obscured_state(
         class.name.clone(),
         obscured_map.clone(),
@@ -328,10 +342,12 @@ fn decompile_class_impl(
         blocked_extra.clone(),
         blocked_renamed,
         shadow,
+        own_field_names,
     );
     let mut body_buf = String::with_capacity(out.capacity() / 2);
     let body_res = emit_class_body(pool, class, &ctx, opts, &mut body_buf, 0);
     let recorded = take_recorded_and_clear();
+    let recorded_static = take_recorded_static_and_clear();
     body_res?;
     if !pkg.is_empty() {
         out.push('\n');
@@ -393,6 +409,18 @@ fn decompile_class_impl(
                 continue;
             }
             out.push_str(&format!("import {};\n", display));
+        }
+        // 单静态导入（遮蔽 owner 的成员逃逸）：裸成员名已过全部捕获/
+        // 冲突门（逃逸函数内），此处按 owner 排序去重发射，确定性。
+        if !recorded_static.is_empty() {
+            let mut statics: Vec<(String, String)> = recorded_static
+                .into_iter()
+                .map(|(member, owner)| (owner, member))
+                .collect();
+            statics.sort();
+            for (owner, member) in statics {
+                out.push_str(&format!("import static {}.{};\n", owner, member));
+            }
         }
     }
     out.push('\n');
@@ -3773,6 +3801,14 @@ struct ObscureState {
     /// Expression-level obscured refs DISCOVERED during the body render
     /// (their imports emit at assembly time).
     recorded: jdc_core::FxHashSet<String>,
+    /// Obscured-owner static-member escapes discovered during the body
+    /// render: bare member name → the RENAMED display owner (dotted) —
+    /// each emits an `import static <owner>.<member>;` line.
+    recorded_static: jdc_core::FxHashMap<String, String>,
+    /// The ROOT class's own field names (static + instance, display
+    /// space): value-namespace capture checks for import simples and
+    /// bare static-import members (JLS 表达式名解析优先绑定变量).
+    own_field_names: jdc_core::FxHashSet<String>,
     /// Simple names of the CURRENT PACKAGE's own classes: importing a
     /// name that collides would SHADOW every same-package use of it in
     /// this file (JLS 7.5.1) — those refs stay qualified (obscured,
@@ -3792,6 +3828,7 @@ thread_local! {
 }
 
 /// Install the per-class render state (call at class render entry).
+#[allow(clippy::too_many_arguments)] // one install call per class — the params ARE the state tuple
 pub(crate) fn set_obscured_state(
     class: String,
     map: jdc_core::FxHashMap<String, String>,
@@ -3800,13 +3837,16 @@ pub(crate) fn set_obscured_state(
     blocked_extra: jdc_core::FxHashSet<String>,
     blocked_renamed: Option<&'static jdc_core::FxHashSet<String>>,
     shadow: jdc_core::FxHashSet<String>,
+    own_field_names: jdc_core::FxHashSet<String>,
 ) {
     OBSCURE.with(|m| {
         *m.borrow_mut() = Some(ObscureState {
             class,
             shadow,
             map,
+            own_field_names,
             recorded: jdc_core::FxHashSet::default(),
+            recorded_static: jdc_core::FxHashMap::default(),
             blocked_base,
             blocked_removed,
             blocked_extra,
@@ -3826,6 +3866,9 @@ pub(crate) fn obscured_simples_snapshot() -> jdc_core::FxHashSet<String> {
         let mut out = jdc_core::FxHashSet::default();
         let Ok(st) = m.try_borrow() else { return out };
         let Some(st) = st.as_ref() else { return out };
+        for simple in st.recorded_static.keys() {
+            out.insert(simple.clone());
+        }
         for simple in st.map.values() {
             out.insert(simple.clone());
         }
@@ -3841,12 +3884,26 @@ pub(crate) fn obscured_simples_snapshot() -> jdc_core::FxHashSet<String> {
     })
 }
 
+/// Take the recorded static-member escapes (bare member → display
+/// owner dotted) and clear.
+pub(crate) fn take_recorded_static_and_clear() -> jdc_core::FxHashMap<String, String> {
+    OBSCURE.with(|m| {
+        let mut st = m.borrow_mut();
+        st.as_mut()
+            .map(|st| std::mem::take(&mut st.recorded_static))
+            .unwrap_or_default()
+    })
+}
+
 /// Take the recorded expression-level refs and clear the state.
 pub(crate) fn take_recorded_and_clear() -> jdc_core::FxHashSet<String> {
+    // Field-level take (NOT the whole-state .take()): the static-member
+    // escapes are consumed by a follow-up take — destroying the state
+    // here would silently drop them.
     OBSCURE.with(|m| {
         m.borrow_mut()
-            .take()
-            .map(|st| st.recorded)
+            .as_mut()
+            .map(|st| std::mem::take(&mut st.recorded))
             .unwrap_or_default()
     })
 }
@@ -4118,8 +4175,14 @@ pub(crate) fn obscured_render_pub(internal: &str) -> Option<String> {
             // `_00i_2` (WhatsApp cannot-find ×27k after the View-shadow
             // escape opened this path at scale).
             let renamed = crate::apply_class_rename(internal);
-            let simple = renamed
-                .rsplit(['/', '$'])
+            // Simple = the DOTTED display's last segment: nested `$` dots
+            // (`x/a$b` → `x.a.b` → `b`), flat `$$` units keep it
+            // (`x/a$$E…` → `x.a$$E…` → `a$$E…`) — the import line binds
+            // exactly this name, so the render simple MUST match (the
+            // old rsplit('$') produced `E…` against import simple
+            // `a$$E…` — DetectBaseActivity 找不到符号 ×24).
+            let simple = crate::classdec::dotted(&renamed)
+                .rsplit('.')
                 .next()
                 .unwrap_or("")
                 .to_string();
@@ -4139,6 +4202,77 @@ pub(crate) fn obscured_render_pub(internal: &str) -> Option<String> {
             }
         }
         None
+    })
+}
+
+/// 静态成员引用的遮蔽逃逸判定（jdc-core `Ctx::obscured_member_escape`
+/// 的实现体，Field/Method 两臂的静态限定渲染前调用）：
+/// - owner 点分渲染的首段被作用域名遮蔽（shadow ∪ 本类简名）——限定
+///   形式 `d.j.v` 的 d 绑定到字段后成员链断裂；
+/// - 类型导入路线（`import d.j; j.v`）同样不可用——简单名 j 也是
+///   作用域字段名（本类/继承，JLS 表达式名解析优先绑定变量）；
+/// - 裸成员名 `v` 干净（非字段名、非遮蔽集、不撞 import 简单名门）。
+///
+/// 三条全满足 → 记录 `import static <display>.<member>;`、返回 true
+///   （emit 打印裸成员名）。否则 false（限定渲染照旧，诚实报错）。
+pub(crate) fn obscured_member_escape_pub(owner: &str, member: &str) -> bool {
+    OBSCURE.with(|m| {
+        let mut st = m.borrow_mut();
+        let Some(st) = st.as_mut() else { return false };
+        if owner.split('/').count() < 2 {
+            return false;
+        }
+        let first = owner.split('/').next().unwrap_or("");
+        let own_renamed = crate::apply_class_rename(&st.class);
+        let own = own_renamed.rsplit(['/', '$']).next().unwrap_or("");
+        let seg_obscured = first == own || st.shadow.contains(first);
+        if !seg_obscured {
+            return false;
+        }
+        // 本类字段名（含静态/实例——值命名空间捕获裸名）
+        let own_fields: jdc_core::FxHashSet<&str> = st
+            .own_field_names
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        // 类型导入路线不可用时逃逸：简单名是本类/继承字段名（JLS
+        // 表达式名解析优先绑定变量）。局部变量捕获简单名的场景
+        // （weixin GameWebViewUI 局部 l）逃逸函数看不见 vt——残留为
+        // 诚实错误（与预扫描导入的既有捕获面同类，罕见）。
+        let renamed_simple = {
+            let r = crate::apply_class_rename(owner);
+            crate::classdec::dotted(&r)
+                .rsplit('.')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        };
+        let simple_unusable = !renamed_simple.is_empty()
+            && (own_fields.contains(renamed_simple.as_str())
+                || st.shadow.contains(renamed_simple.as_str())
+                || renamed_simple == own);
+        if !simple_unusable {
+            return false; // 类型导入路线可用（j.v 渲染照旧）
+        }
+        // 裸成员名必须干净（字段捕获位）。同名**方法**不是冲突：本类
+        // 方法与静态导入同名时构成重载集，javac 按签名联合解析
+        //（escbat4 实测方法守卫 −11 纯损失）。
+        if member.is_empty()
+            || own_fields.contains(member)
+            || st.shadow.contains(member)
+            || member == own
+            || st.blocked_extra.contains(member)
+            || (!st.blocked_removed.contains(member) && st.blocked_base.contains(member))
+            || st.blocked_renamed.is_some_and(|e| e.contains(member))
+            || st.map.values().any(|v| v == member)
+        {
+            return false;
+        }
+        // 已记录（同成员多处引用）→ 照常逃逸：Map 天然去重导入行
+        let renamed = crate::apply_class_rename(owner);
+        let display_dotted = crate::classdec::dotted(&renamed);
+        st.recorded_static.insert(member.to_string(), display_dotted.clone());
+        true
     })
 }
 
@@ -4216,6 +4350,17 @@ fn inherited_field_shadows(
         // through field_deshadow_renames.
         for f in pc.static_fields.iter() {
             out.insert(f.name.to_string());
+        }
+        // Accessible (public/protected) instance fields ARE inherited
+        // into lexical scope (JLS 8.2) and obscure package names in
+        // expression position — k.c1 `public k.m d` vs package `d`
+        // (ActionMenuItemView `d.j.v` → 找不到符号 变量 j ×97 in
+        // reqable). Private/package-private stay out (not in scope;
+        // the ×128 SearchView lesson).
+        for f in pc.instance_fields.iter() {
+            if f.access & (crate::access::ACC_PUBLIC | crate::access::ACC_PROTECTED) != 0 {
+                out.insert(f.name.to_string());
+            }
         }
         if let Some(sup) = &pc.super_name {
             if sup != "java/lang/Object" {
@@ -4416,8 +4561,10 @@ fn compute_obscured_renders(
                 continue;
             }
             let display = crate::apply_class_rename(&r);
-            let simple = display
-                .rsplit(['/', '$'])
+            // dotted-tail simple (flat `$$` vs nested — see the dynamic
+            // path's note)
+            let simple = crate::classdec::dotted(&display)
+                .rsplit('.')
                 .next()
                 .unwrap_or("")
                 .to_string();

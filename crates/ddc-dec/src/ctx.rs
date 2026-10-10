@@ -157,6 +157,10 @@ impl<'a> Ctx for DexCtx<'a> {
         crate::classdec::obscured_render_pub(internal)
     }
 
+    fn obscured_member_escape(&self, owner: &str, member: &str) -> bool {
+        crate::classdec::obscured_member_escape_pub(owner, member)
+    }
+
     fn class_name(&self) -> &str {
         &self.class.name
     }
