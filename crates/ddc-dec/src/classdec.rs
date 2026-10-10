@@ -12,21 +12,34 @@ use crate::method::decompile_method;
 use crate::{desc_type, DexPool, PoolClass, PoolMethod, StaticValue};
 use ddc_dex::insn::InsnKind;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CureMode {
+    /// Full cure: parse → fixed-point simplify → print. The default —
+    /// semantic-preserving normalization of decompiler residue
+    /// (copy inlining, ternaries, for-each, dead stores…), ~90% of
+    /// the cure stage's CPU.
+    Full,
+    /// `--fast`: parse → print. Formatting normalization only (the
+    /// simplify engine is skipped — measured ~10× cheaper CPU),
+    /// output keeps register noise but in canonical layout.
+    Fast,
+    /// `--no-cure`: the file text passes through untouched.
+    Off,
+}
+
 #[derive(Debug, Clone)]
 pub struct ClassOptions {
     /// Prefix each file with a provenance comment.
     pub provenance: bool,
-    /// Run the cure source-level post-pass (semantic-preserving
-    /// normalization of decompiler residue: copy inlining, ternaries,
-    /// for-each, dead stores…). `--no-cure` turns it off.
-    pub cure: bool,
+    /// The cure source-level post-pass mode. Default Full.
+    pub cure: CureMode,
 }
 
 impl Default for ClassOptions {
     fn default() -> Self {
         ClassOptions {
             provenance: true,
-            cure: true,
+            cure: CureMode::Full,
         }
     }
 }
@@ -427,9 +440,7 @@ fn decompile_class_impl(
     out.push_str(&body_buf);
     // cure 源码级后处理：IR pass 之后的源码层净化（拷贝内联/三元化/
     // for-each 还原…）。$DDC 标记文件与解析失败原样返回（见 cure_pass）。
-    if opts.cure {
-        out = crate::cure_pass::simplify_source(out);
-    }
+    out = crate::cure_pass::run(out, opts.cure);
     Ok(out)
 }
 

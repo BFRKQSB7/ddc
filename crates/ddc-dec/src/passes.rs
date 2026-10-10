@@ -3965,14 +3965,21 @@ fn coerce_num_consts(body: &mut Stmt, types: &[&TypeRef]) {
             _ => return,
         };
         let rewritten = match &*val {
+            // dex 的 const/const-wide 字面量是**无类型位模式**：Float/
+            // Double 寄存器上的整型常量就是浮点位（编译器把字面量按位
+            // 发射），必须位重解释（from_bits）——数值转换（as f32）会把
+            // 1073741824 变成 1.07e9f 而非 2.0f，重编译后数值全错且
+            // javac 门不可见（telegram sf/f0：measuredWidth/1073741824
+            // 应为 /2.0f ×2.7 万行；与 4436/4911 两处孪生位对齐——它们
+            // 用的就是 from_bits）。
             Expr::Const(ConstVal::Long(l)) => match &want {
-                JavaType::Double => Some(Expr::Const(ConstVal::Double(*l as f64))),
-                JavaType::Float => Some(Expr::Const(ConstVal::Float(*l as f32))),
+                JavaType::Double => Some(Expr::Const(ConstVal::Double(f64::from_bits(*l as u64)))),
+                JavaType::Float => Some(Expr::Const(ConstVal::Float(f32::from_bits(*l as u32)))),
                 _ => None,
             },
             Expr::Const(ConstVal::Int(i)) => match &want {
                 JavaType::Double => Some(Expr::Const(ConstVal::Double(*i as f64))),
-                JavaType::Float => Some(Expr::Const(ConstVal::Float(*i as f32))),
+                JavaType::Float => Some(Expr::Const(ConstVal::Float(f32::from_bits(*i as u32)))),
                 _ => None,
             },
             _ => None,

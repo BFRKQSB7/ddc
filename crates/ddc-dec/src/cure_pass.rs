@@ -28,9 +28,14 @@ fn header_len(src: &str) -> usize {
     off
 }
 
-/// 跑一遍 cure（parse → simplify_unit → print_unit）。守卫命中或解析
+/// 跑 cure。`Full` = parse → simplify_unit → print_unit（默认）；
+/// `Fast` = parse → print（`--fast`：格式归一，跳过简化引擎——
+/// 实测约占 cure 阶段 CPU 的 10%）；`Off` 原文返回。守卫命中或解析
 /// 失败 → 原文返回（fail-open：净化是增益，不是正确性前提）。
-pub fn simplify_source(src: String) -> String {
+pub fn run(src: String, mode: crate::classdec::CureMode) -> String {
+    if mode == crate::classdec::CureMode::Off {
+        return src;
+    }
     // 失败块标记（`$DDC: … blocks failed to decompile` / 不可约 CFG
     // 提示）必须逐字保留，且这些文件本身带敏感结构——整体跳过。
     if src.contains("$DDC") {
@@ -42,11 +47,13 @@ pub fn simplify_source(src: String) -> String {
     if !outcome.errors.is_empty() {
         return src;
     }
-    cure_java_simplify::simplify_unit(
-        &mut outcome.ast,
-        &mut outcome.unit,
-        &cure_engine::Config::default(),
-    );
+    if mode == crate::classdec::CureMode::Full {
+        cure_java_simplify::simplify_unit(
+            &mut outcome.ast,
+            &mut outcome.unit,
+            &cure_engine::Config::default(),
+        );
+    }
     let printed = cure_java_print::print_unit(&outcome.ast, &outcome.unit);
     let mut out = String::with_capacity(header.len() + printed.len() + 1);
     out.push_str(header);

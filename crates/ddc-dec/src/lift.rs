@@ -1222,10 +1222,26 @@ impl<'a> Lifter<'a> {
                         data,
                     }) = payloads.get(payload_pc)
                     {
-                        let elems = payload_consts(*elem_width, *size, data);
+                        let mut elems = payload_consts(*elem_width, *size, data);
                         let cur = self.regs.get(*reg as usize).cloned().unwrap_or(Reg::Undef);
                         if let Reg::Pending(Expr::NewArray { elem, init, .. }) = cur {
                             if init.is_none() {
+                                // fill-array-data 的字面量也是位模式：按数组元素
+                                // 类型重解释（`new float[] {1050253722…}` 应为
+                                // `{0.3f, 0.6f, 1.0f}`）
+                                match elem.erased() {
+                                    jdc_core::types::JavaType::Float => {
+                                        for e in elems.iter_mut() {
+                                            *e = reinterpret_float(e.clone(), false);
+                                        }
+                                    }
+                                    jdc_core::types::JavaType::Double => {
+                                        for e in elems.iter_mut() {
+                                            *e = reinterpret_float(e.clone(), true);
+                                        }
+                                    }
+                                    _ => {}
+                                }
                                 self.write(
                                     *reg,
                                     Expr::NewArray {
@@ -1259,6 +1275,16 @@ impl<'a> Lifter<'a> {
                 InsnKind::Cmp { dst, a, b, kind } => {
                     let l = self.read_nest(*a);
                     let r = self.read_nest(*b);
+                    // float/double 比较的操作数常量同族位重解释
+                    let (l, r) = match kind {
+                        CmpKind::CmplF | CmpKind::CmpgF => {
+                            (reinterpret_float(l, false), reinterpret_float(r, false))
+                        }
+                        CmpKind::CmplD | CmpKind::CmpgD => {
+                            (reinterpret_float(l, true), reinterpret_float(r, true))
+                        }
+                        _ => (l, r),
+                    };
                     *self.mflags = self.mflags.with_cmp();
                     self.write(*dst, Self::cmp_sentinel(*kind, l, r), ins.pc, false);
                 }
@@ -1426,6 +1452,12 @@ impl<'a> Lifter<'a> {
                 InsnKind::Bin { op, dst, a, b, ty } => {
                     let l = self.read_nest(*a);
                     let r = self.read_nest(*b);
+                    // 浮点运算的操作数常量按位重解释（见 reinterpret_float）
+                    let (l, r) = match *ty {
+                        'F' => (reinterpret_float(l, false), reinterpret_float(r, false)),
+                        'D' => (reinterpret_float(l, true), reinterpret_float(r, true)),
+                        _ => (l, r),
+                    };
                     let jt = primitive_type(*ty);
                     let e = Expr::Bin {
                         op: Self::arith_op(*op),
@@ -2194,7 +2226,27 @@ fn null_in_obj_ctx(mut v: Expr, ctx_ty: &JavaType) -> Expr {
     v
 }
 
-/// Turn a stored cmp sentinel into a `Long.compare`-style call.
+/// dex 的 `const`/`const-wide` 字面量是**无类型位模式**：浮点语境
+/// （float/double 运算与比较、float[]/double[] 填充）的操作数寄存器里
+/// 的 Int/Long 常量就是浮点位——编译器把浮点字面量按位发射，必须按
+/// 位重解释。数值转换（as f32）会把 1073741824 读成 1.07e9f 而非
+/// 2.0f，重编译后数值全错且 javac 门不可见（telegram sf/f0：
+/// `measuredWidth / 1073741824` 应为 `/ 2.0f`，全语料 2.7 万行）。
+fn reinterpret_float(e: Expr, wide: bool) -> Expr {
+    match (&e, wide) {
+        (Expr::Const(ConstVal::Int(i)), false) => {
+            Expr::Const(ConstVal::Float(f32::from_bits(*i as u32)))
+        }
+        (Expr::Const(ConstVal::Long(l)), true) => {
+            Expr::Const(ConstVal::Double(f64::from_bits(*l as u64)))
+        }
+        (Expr::Const(ConstVal::Int(i)), true) => {
+            Expr::Const(ConstVal::Double(f64::from_bits(*i as u64)))
+        }
+        _ => e,
+    }
+}
+
 fn value_of_cmp(e: &Expr) -> Expr {
     value_of_cmp_owned(e.clone())
 }
