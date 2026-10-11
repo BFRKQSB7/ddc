@@ -131,7 +131,7 @@ fn print_help_en() {
     println!("    disasm <input> FQCN[.method]    raw bytecode (opcode + pc)");
     println!();
     println!("  Targeted decompilation:");
-    println!("    getclass <input> FQCN [-o f]    one class (+nested)");
+    println!("    getclass <input> FQCN [--fast] [-o f]  one class (+nested)");
     println!("    getmethod <input> FQCN.method   one method, all overloads");
     println!("    pkg <input> com.foo [-o DIR]    one package incl. subpackages;");
     println!("                                    --app uses the manifest package");
@@ -256,7 +256,7 @@ fn print_help_zh() {
     println!("    disasm <输入> FQCN[.方法]       原始字节码（操作码 + pc）");
     println!();
     println!("  定点反编译：");
-    println!("    getclass <输入> FQCN [-o 文件]  单类（含嵌套）");
+    println!("    getclass <输入> FQCN [--fast] [-o 文件]  单类（含嵌套）");
     println!("    getmethod <输入> FQCN.方法      单方法，含全部重载");
     println!("    pkg <输入> com.foo [-o 目录]    单个包（含子包）；--app 取 manifest 包名");
     println!();
@@ -584,6 +584,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 OUT_FILE_EN,
                 DEX_EN,
                 FMT_ROW_EN,
+                ("--fast", "skip the code-simplification pass (formatting only)"),
             ],
             examples: &[
                 ("ddc getclass app.apk com.example.Foo", "one class with its nested classes, to stdout"),
@@ -1938,10 +1939,12 @@ fn cmd_getclass(args: &[String], t0: std::time::Instant) -> Result<()> {
     let mut out: Option<PathBuf> = None;
     let mut dex_filters: Vec<String> = Vec::new();
     let mut format = OutFormat::Auto;
+    let mut cure = ddc_dec::classdec::CureMode::Full;
     let mut positionals: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--fast" => cure = ddc_dec::classdec::CureMode::Fast,
             "--format" => {
                 format = parse_format(
                     args.get(i + 1)
@@ -1998,7 +2001,7 @@ fn cmd_getclass(args: &[String], t0: std::time::Instant) -> Result<()> {
             }
         }
     }
-    let (text, defining_names) = getclass_text(&inputs, &fqcn, &dex_filters)?;
+    let (text, defining_names) = getclass_text_mode(&inputs, &fqcn, &dex_filters, cure)?;
     let text = format!("{text}\n");
     if defining_names.len() > 1 {
         eprintln!(
@@ -2040,6 +2043,15 @@ pub(crate) fn getclass_text(
     inputs: &[PathBuf],
     fqcn: &str,
     dex_filters: &[String],
+) -> Result<(String, Vec<String>)> {
+    getclass_text_mode(inputs, fqcn, dex_filters, ddc_dec::classdec::CureMode::Full)
+}
+
+pub(crate) fn getclass_text_mode(
+    inputs: &[PathBuf],
+    fqcn: &str,
+    dex_filters: &[String],
+    cure: ddc_dec::classdec::CureMode,
 ) -> Result<(String, Vec<String>)> {
     let files = expand_inputs(inputs)?;
     let parsed = parse_images(filter_images_by_dex(collect_images(&files)?, dex_filters)?)?;
@@ -2107,7 +2119,10 @@ pub(crate) fn getclass_text(
 
     let pending: std::sync::Mutex<Vec<ddc_dec::classdec::PendingMonitor>> =
         std::sync::Mutex::new(Vec::new());
-    let opts = ClassOptions::default();
+    let opts = ClassOptions {
+        provenance: true,
+        cure,
+    };
     let result = ddc_dec::classdec::decompile_class(&pool, pc, &opts, &pending)
         .map_err(|e| anyhow::anyhow!("{:#}", e));
     let text = match result {
