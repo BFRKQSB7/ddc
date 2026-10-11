@@ -9,8 +9,7 @@
 //! 接线位：`decompile_class_impl` 组装完文件文本之后。三重守卫：
 //! - `$DDC` 失败块标记是承重诊断（cure 的 AST 无注释节点会丢弃）→
 //!   这类文件原样返回；
-//! - 解析错误非空 → 原样返回（容错兜底；实测语料为 0）；
-//! - `ClassOptions::cure == false`（CLI `--no-cure`）时整个 pass 跳过。
+//! - 解析错误非空 → 原样返回（容错兜底；实测语料为 0）。
 
 /// 头部注释行（provenance/Source file/synthetic）的长度：逐行扫描，
 /// 直到首个非注释非空行（package 或类型声明）。cure 的打印器不回放
@@ -30,12 +29,9 @@ fn header_len(src: &str) -> usize {
 
 /// 跑 cure。`Full` = parse → simplify_unit → print_unit（默认）；
 /// `Fast` = parse → print（`--fast`：格式归一，跳过简化引擎——
-/// 实测约占 cure 阶段 CPU 的 10%）；`Off` 原文返回。守卫命中或解析
+/// 实测约占 cure 阶段 CPU 的 10%）。守卫命中或解析
 /// 失败 → 原文返回（fail-open：净化是增益，不是正确性前提）。
 pub fn run(src: String, mode: crate::classdec::CureMode) -> String {
-    if mode == crate::classdec::CureMode::Off {
-        return src;
-    }
     // 失败块标记（`$DDC: … blocks failed to decompile` / 不可约 CFG
     // 提示）必须逐字保留，且这些文件本身带敏感结构——整体跳过。
     if src.contains("$DDC") {

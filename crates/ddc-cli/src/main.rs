@@ -95,9 +95,8 @@ fn print_help_en() {
     println!("  -t, --threads <n>     parallel workers (default: CPU count minus the");
     println!("                        file-writer pool; stdout forces one thread for pool order)");
     println!("  --no-comments         omit the provenance header");
-    println!("  --fast                source pass keeps formatting only (skips the");
-    println!("                        simplification engine; ~2x faster on large APKs)");
-    println!("  --no-cure             source pass off entirely (raw decompiler output)");
+    println!("  --fast                skip the code-simplification pass (keep formatting");
+    println!("                        only) — roughly halves the time on large APKs");
     println!("  --symbols <dir>       IntDef symbol table (built-in android-37 by");
     println!("                        default; this rebuilds it from an SDK platform");
     println!("                        dir: android.jar + data/annotations.zip)");
@@ -223,9 +222,8 @@ fn print_help_zh() {
     println!("  -t, --threads <n>    并行 worker 数（默认 CPU 数减写盘线程池；");
     println!("                       stdout 模式强制单线程保证池序）");
     println!("  --no-comments        省略出处注释头");
-    println!("  --fast               源码后处理仅保留格式归一（跳过简化引擎；");
-    println!("                       大 APK 约 2 倍提速）");
-    println!("  --no-cure            源码后处理整体关闭（原始反编译输出）");
+    println!("  --fast               跳过代码简化 pass（仅保留格式归一）——大 APK");
+    println!("                       耗时约减半");
     println!("  --symbols <目录>     IntDef 符号表（默认内置 android-37；传入 SDK");
     println!("                       平台目录可重建：android.jar + data/annotations.zip）");
     println!("  -v, --verbose        stderr 输出逐 dex 统计与慢类");
@@ -2604,7 +2602,6 @@ fn run() -> Result<()> {
             "-c" | "--class" => only = Some(take_value!()),
             "-l" | "--list" => list = true,
             "--no-comments" => comments = false,
-            "--no-cure" => cure = ddc_dec::classdec::CureMode::Off,
             "--fast" => cure = ddc_dec::classdec::CureMode::Fast,
             // consumed in main() for the whole invocation; skip here.
             "--symbols" => {

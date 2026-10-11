@@ -35,14 +35,14 @@ trees (0-diff). Every release is checked.
 
 **P1 — wall time.** End-to-end decompile time per corpus, measured
 cold, twice, median. The cure pass costs roughly the decompile
-itself on large corpora (~2×); `--no-cure` trades the S1/S2 gains
-back for speed.
+itself on large corpora (~2×); `--fast` skips the simplification
+engine (formatting only) for roughly half the wall time.
 
 ## Where we stand (2026-10-11, four-corpus battery)
 
 The four public APK corpora every release is gated on:
 
-| corpus | files | errors (E1) | vs v0.1.27 | lines (S1) | vs no-cure |
+| corpus | files | errors (E1) | vs v0.1.27 | lines (S1) | vs raw |
 |---|---|---|---|---|---|
 | reqable | 5,579 | **317** | −66 | 607,038 | **−15.1%** |
 | weibo | 110,525 | **3,622** | −66 | 15,472,863 | −16.0% |
@@ -51,8 +51,9 @@ The four public APK corpora every release is gated on:
 | **total** | **474,206** | **8,647** | **−148** | **55.2M** | **−15.3%** |
 
 (v0.1.27 = the last released baseline measured on the identical
-corpora and classpath; no-cure = current binary with `--no-cure`,
-isolating the source-level pass.)
+corpora and classpath; raw = the source-level pass disabled — the
+isolation measurement, taken before the raw mode was folded out of
+the CLI surface.)
 
 Sampled structural simplification (reqable, cure stats): 28,184
 edits, AST nodes −4.1%, decision points −4.5%, parse failures 0/5,579.
@@ -80,14 +81,14 @@ source −360 LoC**. Longer arc on the same gate (earlier corpora mix):
 
 ## Performance (P1)
 
-| corpus | decompile (cure on) | cure off |
+| corpus | decompile (default) | `--fast` |
 |---|---|---|
-| reqable (36 MB) | 0.9 s | 0.4 s |
-| weibo (185 MB) | 23.4 s | 10.3 s |
+| reqable (36 MB) | 0.9 s | 0.5 s |
+| weibo (185 MB) | 23.4 s | 11.5 s |
 
 The cure pass is the dominant post-decompile cost (parse →
 fixed-point simplify → print per file, inside the class worker
-threads). `--no-cure` exists for latency-sensitive batch use.
+threads). `--fast` is the latency-sensitive mode.
 
 ## Reproducing
 

@@ -20,11 +20,10 @@ pub enum CureMode {
     /// the cure stage's CPU.
     Full,
     /// `--fast`: parse → print. Formatting normalization only (the
-    /// simplify engine is skipped — measured ~10× cheaper CPU),
-    /// output keeps register noise but in canonical layout.
+    /// simplify engine is skipped — the stage drops from ~90% of the
+    /// cure CPU to ~10%): output keeps register noise but in canonical
+    /// layout, at roughly half the default's wall time on large APKs.
     Fast,
-    /// `--no-cure`: the file text passes through untouched.
-    Off,
 }
 
 #[derive(Debug, Clone)]
