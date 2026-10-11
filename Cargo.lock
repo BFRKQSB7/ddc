@@ -310,10 +310,14 @@ dependencies = [
 [[package]]
 name = "cure-engine"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3a07075dad3d5e418c05f96c01cac4a1041db3f5fdcc530973f3174850adad2e"
 
 [[package]]
 name = "cure-java-ast"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c2e64381704fe2549e0c812d4e74cd977f53c5fed077fb855237db95d46daba"
 dependencies = [
  "cure-engine",
  "cure-tree",
@@ -322,6 +326,8 @@ dependencies = [
 [[package]]
 name = "cure-java-parser"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45405bf73c7fb80d114ab714df0e0eea0f967f10019d4c0600f07c00a9c82f2d"
 dependencies = [
  "cure-engine",
  "cure-java-ast",
@@ -330,6 +336,8 @@ dependencies = [
 [[package]]
 name = "cure-java-print"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8603f881940221cd151bd820c9c14a6c2928145207c8d3802a572ecfdc7bf6f8"
 dependencies = [
  "cure-java-ast",
 ]
@@ -337,6 +345,8 @@ dependencies = [
 [[package]]
 name = "cure-java-simplify"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cc706da1d78633316e0cc795a9c95a98d7a7407e9bf4340473303d41f2b13c4"
 dependencies = [
  "cure-engine",
  "cure-java-ast",
@@ -345,6 +355,8 @@ dependencies = [
 [[package]]
 name = "cure-tree"
 version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5576b49c44fd7a6a472b2a6211c3b5113902ba68e5a66345a4fc7b2453c13dc"
 dependencies = [
  "cure-engine",
 ]
@@ -734,6 +746,8 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jdc-core"
 version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2d5763bcf6d5f52c16dd1e61f6a1c71b40473542dbead373ea0f9eec85fc0b7"
 dependencies = [
  "bitflags",
 ]
