@@ -965,6 +965,7 @@ pub(crate) fn cmd_pkg(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut out_dir: Option<PathBuf> = None;
     let mut from_manifest = false;
+    let mut cure = ddc_dec::classdec::CureMode::Full;
     let mut threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
@@ -998,6 +999,7 @@ pub(crate) fn cmd_pkg(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "--app" => from_manifest = true,
+            "--fast" => cure = ddc_dec::classdec::CureMode::Fast,
             a if a.starts_with('-') => bail!(
                 "{}",
                 bif!("pkg: unknown option {0}", "pkg：未知选项 {0}"; a)
@@ -1154,7 +1156,10 @@ pub(crate) fn cmd_pkg(args: &[String]) -> Result<()> {
                                     ddc_dec::classdec::decompile_class(
                                         pool_ref,
                                         pc,
-                                        &crate::ClassOptions::default(),
+                                        &crate::ClassOptions {
+                                            provenance: true,
+                                            cure,
+                                        },
                                         pending_ref,
                                     )
                                 }));
@@ -1193,9 +1198,11 @@ pub(crate) fn cmd_pkg(args: &[String]) -> Result<()> {
 pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut format = crate::OutFormat::Auto;
+    let mut cure = ddc_dec::classdec::CureMode::Full;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--fast" => cure = ddc_dec::classdec::CureMode::Fast,
             "-d" | "--dex" => {
                 // parse_common owns -d/--dex, but this loop runs first —
                 // forward both tokens so it can see them.
@@ -1268,10 +1275,11 @@ pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
     };
     let mut last_err: Option<anyhow::Error> = None;
     for (class, method) in candidates {
-        match crate::getclass_text(
+        match crate::getclass_text_mode(
             std::slice::from_ref(&common.input),
             &class,
             &common.dex_filters,
+            cure,
         ) {
             Ok((text, _defining)) => {
                 let body = match &method {

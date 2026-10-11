@@ -604,6 +604,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 OUT_FILE_EN,
                 DEX_EN,
+                ("--fast", "skip the code-simplification pass (formatting only)"),
                 FMT_ROW_EN,
             ],
             examples: &[
@@ -624,6 +625,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--app", "take the package from AndroidManifest.xml instead"),
                 ("-o, --output DIR", "output root (default: <package>-out/)"),
                 ("-t, --threads N", "parallel workers (default: CPU count)"),
+                ("--fast", "skip the code-simplification pass (formatting only)"),
                 DEX_EN,
             ],
             examples: &[
@@ -887,6 +889,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             ],
             opts: &[
                 OUT_FILE_ZH,
+                ("--fast", "跳过代码简化 pass（仅保留格式归一）"),
                 DEX_ZH,
                 FMT_ROW_ZH,
             ],
