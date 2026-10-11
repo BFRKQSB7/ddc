@@ -363,7 +363,7 @@ dependencies = [
 
 [[package]]
 name = "ddc-cli"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "ddc-dec",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "ddc-dec"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "cure-engine",
