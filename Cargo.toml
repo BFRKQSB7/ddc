@@ -25,3 +25,14 @@ codegen-units = 1
 
 
 
+
+[patch.crates-io]
+jdc-core = { path = "../jdc-core" }
+# dev-pin: trailing_else_flatten 修复验证
+cure-engine = { path = "../cure/crates/cure-engine" }
+cure-tree = { path = "../cure/crates/cure-tree" }
+cure-java-ast = { path = "../cure/crates/cure-java-ast" }
+cure-java-parser = { path = "../cure/crates/cure-java-parser" }
+cure-java-print = { path = "../cure/crates/cure-java-print" }
+cure-java-simplify = { path = "../cure/crates/cure-java-simplify" }
+
