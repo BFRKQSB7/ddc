@@ -22,6 +22,3 @@ anyhow = "1"
 debug = true
 lto = "fat"
 codegen-units = 1
-
-[patch.crates-io]
-jdc-core = { path = "../jdc-core" }
