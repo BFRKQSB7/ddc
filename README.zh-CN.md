@@ -36,7 +36,7 @@
   个文件经过语义保持的源码级优化 pass——寄存器拷贝链内联、if/else
   赋值折叠为三元、for-each 还原、死存储与编译器产物清除，真实语料
   **输出行数 −15%** 且 javac 门结果不变。优化是精确的，所以花时间：
-  weibo（11 万文件）优化后 23.4 s，`--fast` 跳过简化仅保格式为 11.5 s。
+  weibo（11 万文件）优化后 21 s，`--fast` 跳过简化仅保格式为 10 s。
 - **HTTP REST + MCP，开箱内置**（[xyz-rust](https://github.com/ejfkdev/xyz-rust)）：
   `ddc serve` 把每个查询命令暴露为 REST 路由（GET 绑 query 参数，
   POST 亦接受 JSON body）+ `GET /openapi.json` +

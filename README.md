@@ -41,7 +41,7 @@ parses cleanly.
   ternaries, recovers for-each, drops dead stores and compiler
   artifacts — −15% output lines on real corpora with identical
   javac-gate results. The pass is exact, so it costs time: weibo
-  (110k files) takes 23.4 s optimized vs 11.5 s with `--fast` (skip
+  (110k files) takes 21 s optimized vs 10 s with `--fast` (skip
   the simplification, keep formatting).
 - **HTTP REST + MCP, built in** ([xyz-rust](https://github.com/ejfkdev/xyz-rust)):
   `ddc serve` exposes every query as a REST route (GET with query

@@ -44,11 +44,11 @@ The four public APK corpora every release is gated on:
 
 | corpus | files | errors (E1) | vs v0.1.27 | lines (S1) | vs raw |
 |---|---|---|---|---|---|
-| reqable | 5,579 | **317** | −66 | 607,038 | **−15.1%** |
-| weibo | 110,525 | **3,622** | −66 | 15,472,863 | −16.0% |
-| lark | 118,502 | **1,034** | −5 | 17,321,592 | −16.8% |
-| weixin | 239,600 | **3,674** | −8 | 21,777,774 | −13.7% |
-| **total** | **474,206** | **8,647** | **−148** | **55.2M** | **−15.3%** |
+| reqable | 5,579 | **317** | −69 | 606,361 | **−15.2%** |
+| weibo | 110,525 | **3,621** | −67 | 14,780,926 | −19.9% |
+| lark | 118,502 | **1,019** | −20 | 16,974,806 | −18.4% |
+| weixin | 239,600 | **3,676** | −6 | 21,372,636 | −15.1% |
+| **total** | **474,206** | **8,633** | **−162** | **54.7M** | **−15.8%** |
 
 (v0.1.27 = the last released baseline measured on the identical
 corpora and classpath; raw = the source-level pass disabled — the
@@ -65,11 +65,12 @@ edits, AST nodes −4.1%, decision points −4.5%, parse failures 0/5,579.
 | v0.1.27 (no cure) | 8,795 | last release, identical corpora |
 | + cure integration | 8,748 | additive source-level pass (7 cure correctness guards) |
 | + 4 IR passes retired | 8,725 | trailing-return/ternary/final-dead/xor → cure absorbs (parity, −360 LoC in ddc) |
-| + obscured-member escape | **8,647** | JLS 6.4.2 static-import escape (reqable cannot-find:变量 103 → 5) |
+| + obscured-member escape | 8,647 | JLS 6.4.2 static-import escape (reqable cannot-find:变量 103 → 5) |
+| + cure rules round 2 | **8,633** | dead_pure_call / trailing_else_flatten / (T)(Object)x folding |
 
 Total this arc: **−148 errors (−1.7%), −15.3% output lines, ddc
 source −360 LoC**. Longer arc on the same gate (earlier corpora mix):
-26,672 (2026-09) → 8,777 (v0.1.25) → 8,647.
+26,672 (2026-09) → 8,777 (v0.1.25) → 8,647 → 8,633.
 
 ## Known floors (not counted as fixable)
 
@@ -84,7 +85,7 @@ source −360 LoC**. Longer arc on the same gate (earlier corpora mix):
 | corpus | decompile (default) | `--fast` |
 |---|---|---|
 | reqable (36 MB) | 0.9 s | 0.5 s |
-| weibo (185 MB) | 23.4 s | 11.5 s |
+| weibo (185 MB) | 20.9 s | 9.9 s |
 
 The cure pass is the dominant post-decompile cost (parse →
 fixed-point simplify → print per file, inside the class worker
