@@ -191,16 +191,18 @@ pub fn info_report(input: &Path) -> Result<InfoReport> {
 /// share a name, in which case both rows appear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TreeKind {
-    Class,
-    Package,
+    /// A terminating item (class name, string, resource file…).
+    Leaf,
+    /// A prefix group (package / directory) with a subtree count.
+    Group,
 }
 
 #[derive(Debug, Clone)]
 pub struct TreeRow {
     pub path: String,
     pub kind: TreeKind,
-    /// Classes in this subtree (1 for a class leaf).
-    pub classes: usize,
+    /// Items in this subtree (the item's own weight for a leaf).
+    pub count: usize,
 }
 
 /// A page of class names plus the pre-window match count.
@@ -209,22 +211,25 @@ pub struct ClassPage {
     pub total: usize,
 }
 
-/// Normalize a user prefix: dotted or slashed, trailing separators
-/// stripped. Empty means "the root".
-pub fn normalize_class_prefix(p: &str) -> String {
-    p.trim()
-        .replace('/', ".")
-        .trim_end_matches('.')
-        .to_string()
+/// Normalize a user prefix for a separator: slashes/dots unified to
+/// `sep`, trailing separators stripped. Empty means "the root".
+pub fn normalize_prefix(p: &str, sep: char) -> String {
+    let unified = p.trim().replace(['/', '.'], &sep.to_string());
+    unified.trim_end_matches(sep).to_string()
 }
 
-/// Segment-exact prefix match: `a.b` matches `a.b` and `a.b.*`, never
-/// `a.bc`.
-fn class_under_prefix(name: &str, prefix: &str) -> bool {
+/// Normalize a class prefix (dotted form).
+pub fn normalize_class_prefix(p: &str) -> String {
+    normalize_prefix(p, '.')
+}
+
+/// Segment-exact prefix match: with sep='.', `a.b` matches `a.b` and
+/// `a.b.*`, never `a.bc`.
+pub fn under_prefix(name: &str, prefix: &str, sep: char) -> bool {
     name == prefix
         || (name.len() > prefix.len()
             && name.starts_with(prefix)
-            && name.as_bytes()[prefix.len()] == b'.')
+            && name.as_bytes()[prefix.len()] == sep as u8)
 }
 
 /// Class names, dotted form, deduped in pool order; `pattern` is a
@@ -295,7 +300,7 @@ pub fn class_names(
     let matched: Vec<String> = match prefix {
         Some(p) => matched
             .into_iter()
-            .filter(|n| class_under_prefix(n, p))
+            .filter(|n| under_prefix(n, p, '.'))
             .collect(),
         None => matched,
     };
@@ -310,7 +315,9 @@ pub fn class_names(
 
 struct TrieNode {
     children: std::collections::BTreeMap<String, TrieNode>,
-    leaf: bool,
+    /// Weight of keys terminating exactly here (duplicates accumulate).
+    self_count: usize,
+    /// Weight of every key in this subtree (self included).
     count: usize,
 }
 
@@ -318,7 +325,7 @@ impl TrieNode {
     fn new() -> Self {
         TrieNode {
             children: std::collections::BTreeMap::new(),
-            leaf: false,
+            self_count: 0,
             count: 0,
         }
     }
@@ -333,20 +340,35 @@ impl TrieNode {
 /// below the scope (classes that terminate earlier still appear).
 /// Rows come out in segment-lexicographic order (deterministic).
 pub fn class_tree(names: &[String], prefix: Option<&str>, depth: Option<usize>) -> Vec<TreeRow> {
+    prefix_tree(names.iter().map(|n| (n.as_str(), 1)), prefix, depth, '.')
+}
+
+/// Generic weighted segment tree over `(key, weight)` items. Duplicate
+/// keys accumulate their weights, so callers can aggregate rows (hits,
+/// members, resources) as well as unique names.
+pub fn prefix_tree<'a, I>(
+    items: I,
+    prefix: Option<&str>,
+    depth: Option<usize>,
+    sep: char,
+) -> Vec<TreeRow>
+where
+    I: IntoIterator<Item = (&'a str, usize)>,
+{
     let mut root = TrieNode::new();
-    for name in names {
+    for (key, weight) in items {
         let mut n = &mut root;
-        n.count += 1;
-        for seg in name.split('.') {
+        n.count += weight;
+        for seg in key.split(sep) {
             n = n.children.entry(seg.to_string()).or_insert_with(TrieNode::new);
-            n.count += 1;
+            n.count += weight;
         }
-        n.leaf = true;
+        n.self_count += weight;
     }
-    let scope_path = prefix.unwrap_or("");
+    let scope_path = prefix.unwrap_or("").trim_end_matches(sep);
     let mut scope = &root;
     if !scope_path.is_empty() {
-        for seg in scope_path.split('.') {
+        for seg in scope_path.split(sep) {
             match scope.children.get(seg) {
                 Some(n) => scope = n,
                 None => return Vec::new(),
@@ -354,36 +376,36 @@ pub fn class_tree(names: &[String], prefix: Option<&str>, depth: Option<usize>) 
         }
     }
     let mut out = Vec::new();
-    if !scope_path.is_empty() && scope.leaf {
+    if !scope_path.is_empty() && scope.self_count > 0 {
         out.push(TreeRow {
             path: scope_path.to_string(),
-            kind: TreeKind::Class,
-            classes: 1,
+            kind: TreeKind::Leaf,
+            count: scope.self_count,
         });
     }
     for (seg, child) in &scope.children {
         let path = if scope_path.is_empty() {
             seg.clone()
         } else {
-            format!("{scope_path}.{seg}")
+            format!("{scope_path}{sep}{seg}")
         };
         match depth {
-            None => emit_adaptive(child, path, &mut out),
-            Some(target) => emit_fixed(child, path, 1, target, &mut out),
+            None => emit_adaptive(child, path, sep, &mut out),
+            Some(target) => emit_fixed(child, path, sep, 1, target, &mut out),
         }
     }
     out
 }
 
-fn emit_adaptive(node: &TrieNode, path: String, out: &mut Vec<TreeRow>) {
+fn emit_adaptive(node: &TrieNode, path: String, sep: char, out: &mut Vec<TreeRow>) {
     let mut path = path;
     let mut node = node;
     loop {
-        if node.leaf {
+        if node.self_count > 0 {
             out.push(TreeRow {
                 path: path.clone(),
-                kind: TreeKind::Class,
-                classes: 1,
+                kind: TreeKind::Leaf,
+                count: node.self_count,
             });
         }
         if node.children.is_empty() {
@@ -391,26 +413,33 @@ fn emit_adaptive(node: &TrieNode, path: String, out: &mut Vec<TreeRow>) {
         }
         if node.children.len() == 1 {
             let (seg, child) = node.children.iter().next().expect("len == 1");
-            path.push('.');
+            path.push(sep);
             path.push_str(seg);
             node = child;
             continue;
         }
         out.push(TreeRow {
             path,
-            kind: TreeKind::Package,
-            classes: node.count,
+            kind: TreeKind::Group,
+            count: node.count,
         });
         return;
     }
 }
 
-fn emit_fixed(node: &TrieNode, path: String, level: usize, target: usize, out: &mut Vec<TreeRow>) {
-    if node.leaf {
+fn emit_fixed(
+    node: &TrieNode,
+    path: String,
+    sep: char,
+    level: usize,
+    target: usize,
+    out: &mut Vec<TreeRow>,
+) {
+    if node.self_count > 0 {
         out.push(TreeRow {
             path: path.clone(),
-            kind: TreeKind::Class,
-            classes: 1,
+            kind: TreeKind::Leaf,
+            count: node.self_count,
         });
     }
     if node.children.is_empty() {
@@ -419,16 +448,16 @@ fn emit_fixed(node: &TrieNode, path: String, level: usize, target: usize, out: &
     if level == target {
         out.push(TreeRow {
             path,
-            kind: TreeKind::Package,
-            classes: node.count,
+            kind: TreeKind::Group,
+            count: node.count,
         });
         return;
     }
     for (seg, child) in &node.children {
         let mut p = path.clone();
-        p.push('.');
+        p.push(sep);
         p.push_str(seg);
-        emit_fixed(child, p, level + 1, target, out);
+        emit_fixed(child, p, sep, level + 1, target, out);
     }
 }
 
@@ -672,6 +701,116 @@ pub fn string_rows(
     Ok(rows)
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[derive(xyz_rust::XyzOutput)]
+pub struct MemberRow {
+    pub dex: String,
+    /// `method` | `field`.
+    pub kind: String,
+    /// Owner class, dotted form.
+    pub class: String,
+    /// Rendered member: `name(descriptor)` or `name type`.
+    pub member: String,
+}
+
+/// Members (`--method`/`--field` filter, optional NAME substring and
+/// `--class` scope). Same scan as the CLI text path, dotted owner names.
+pub fn member_rows(
+    input: &Path,
+    name: Option<&str>,
+    class: Option<&str>,
+    fuzzy_class: bool,
+    kind_want: Option<&str>,
+    dex_filters: &[String],
+) -> Result<Vec<MemberRow>> {
+    let mut rows: Vec<MemberRow> = Vec::new();
+    for_each_image(&input.to_path_buf(), dex_filters, &mut |label, image| {
+        let dex_name = label
+            .rsplit_once('!')
+            .map(|(_, e)| e)
+            .unwrap_or(label)
+            .to_string();
+        let Ok(dex) = RawDex::parse(image) else {
+            return;
+        };
+        let class_ok = |cb: &[u8]| -> bool {
+            match class {
+                None => true,
+                Some(c) => {
+                    let hay = String::from_utf8_lossy(cb);
+                    let hay = hay.trim_start_matches('L').trim_end_matches(';');
+                    let needle = c.replace('.', "/");
+                    if fuzzy_class {
+                        hay.contains(&needle)
+                    } else {
+                        hay == needle
+                    }
+                }
+            }
+        };
+        if kind_want != Some("field") {
+            for mi in 0..dex.method_n as u32 {
+                let Some((cidx, proto, nb)) = dex.method_parts(mi) else {
+                    continue;
+                };
+                if let Some(n) = name {
+                    if !dex_match(nb, n.as_bytes()) {
+                        continue;
+                    }
+                }
+                if let Some(cb) = dex.type_bytes(cidx) {
+                    if !class_ok(cb) {
+                        continue;
+                    }
+                    rows.push(MemberRow {
+                        dex: dex_name.clone(),
+                        kind: "method".to_string(),
+                        class: dex.class_name(cidx).replace('/', "."),
+                        member: format!(
+                            "{}{}",
+                            decode_mutf8_lossy(nb),
+                            dex.proto_desc(proto)
+                        ),
+                    });
+                }
+            }
+        }
+        if kind_want != Some("method") {
+            for fi in 0..dex.field_n as u32 {
+                let Some((cidx, nb, tb)) = dex.field_parts(fi) else {
+                    continue;
+                };
+                if let Some(n) = name {
+                    if !dex_match(nb, n.as_bytes()) {
+                        continue;
+                    }
+                }
+                if let Some(cb) = dex.type_bytes(cidx) {
+                    if !class_ok(cb) {
+                        continue;
+                    }
+                    rows.push(MemberRow {
+                        dex: dex_name.clone(),
+                        kind: "field".to_string(),
+                        class: dex.class_name(cidx).replace('/', "."),
+                        member: format!(
+                            "{} {}",
+                            decode_mutf8_lossy(nb),
+                            decode_mutf8_lossy(tb)
+                        ),
+                    });
+                }
+            }
+        }
+    })?;
+    Ok(rows)
+}
+
+/// Case-sensitive substring match on raw MUTF-8 bytes.
+fn dex_match(nb: &[u8], needle: &[u8]) -> bool {
+    nb.len() >= needle.len() && nb.windows(needle.len()).any(|w| w == needle)
+}
+
 /// Hierarchy rows for a class (dotted or slashed `target`): its own
 /// `class`/`extends`/`implements` rows plus every direct `sub`/`impl`.
 pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Result<Vec<RelationRow>> {
@@ -888,8 +1027,8 @@ mod tree_tests {
     fn render(rows: &[TreeRow]) -> Vec<String> {
         rows.iter()
             .map(|r| match r.kind {
-                TreeKind::Package => format!("{}/ ({})", r.path, r.classes),
-                TreeKind::Class => r.path.clone(),
+                TreeKind::Group => format!("{}/ ({})", r.path, r.count),
+                TreeKind::Leaf => r.path.clone(),
             })
             .collect()
     }

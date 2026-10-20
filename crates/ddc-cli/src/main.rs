@@ -439,9 +439,17 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             ],
             opts: &[
                 ("-o, --output FILE", "write the entry's raw bytes (binary XML stays binary; stdout decodes it)"),
+                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--prefix P", "segment-exact scope; expand a frontier row"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows (0 = unlimited)"),
+                ("--offset M", "skip M rows — resume where the previous page stopped"),
             ],
             examples: &[
-                ("ddc res app.apk | head -40", "list archive entries"),
+                ("ddc res app.apk", "directory summary of the archive"),
+                ("ddc res app.apk --full | head -40", "flat entry listing"),
+                ("ddc res app.apk --prefix res/drawable", "one directory's files"),
                 ("ddc res app.apk AndroidManifest.xml", "decode one entry (binary XML becomes text)"),
                 ("ddc res app.apk resources.arsc -o arsc.bin", "save one entry's raw bytes"),
             ],
@@ -457,12 +465,15 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-f, --filter TEXT", "keep strings containing TEXT (case-insensitive)"),
                 ("--with-locations", "map each string to its referencing methods"),
+                ("--limit N", "keep at most N strings (0 = unlimited); JSON gains total/next_offset"),
+                ("--offset M", "skip M strings — resume where the previous page stopped"),
                 DEX_EN,
                 FMT_ROW_EN,
             ],
             examples: &[
                 ("ddc strings app.apk -f token", "strings containing \"token\""),
                 ("ddc strings app.apk -f api_key --with-locations", "each hit mapped to its referencing methods"),
+                ("ddc strings app.apk --limit 50 --offset 100 --format json", "paged string table"),
             ],
         },
     ),
@@ -478,12 +489,20 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-C, --class FQCN", "owner class for method/field queries (exact unless --fuzzy-class)"),
                 ("--fuzzy-class", "match the owner class fuzzily"),
+                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--prefix P", "segment-exact scope; expand a frontier row"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows (0 = unlimited)"),
+                ("--offset M", "skip M rows — resume where the previous page stopped"),
                 OUT_FILE_EN,
                 DEX_EN,
                 FMT_ROW_EN,
             ],
             examples: &[
-                ("ddc findrefs app.apk string api_key", "every \"api_key\" string-literal site"),
+                ("ddc findrefs app.apk string api_key", "which packages use \"api_key\" (frontier with counts)"),
+                ("ddc findrefs app.apk string api_key --full", "every hit row"),
+                ("ddc findrefs app.apk string http --sort count", "biggest referencing packages first"),
                 ("ddc findrefs app.apk class okhttp3.OkHttpClient", "code usage of the class (new/check-cast/instance-of)"),
                 ("ddc findrefs app.apk method onCreate --class android/app/Activity", "invoke sites of Activity.onCreate"),
                 ("ddc findrefs app.apk field CREATOR", "reads/writes of fields named CREATOR"),
@@ -500,10 +519,18 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("FQCN", "optional owner class, narrows the search"),
             ],
             opts: &[
+                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--prefix P", "segment-exact scope; expand a frontier row"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows (0 = unlimited)"),
+                ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
+                FMT_ROW_EN,
             ],
             examples: &[
-                ("ddc callers app.apk sendMessage", "methods invoking sendMessage"),
+                ("ddc callers app.apk sendMessage", "which packages invoke sendMessage (frontier)"),
+                ("ddc callers app.apk sendMessage --full", "every call site row"),
                 ("ddc callers app.apk onCreate android/app/Activity", "scope the callee to one owner class"),
             ],
         },
@@ -521,12 +548,20 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--fuzzy-class", "match the class fuzzily"),
                 ("--method", "methods only"),
                 ("--field", "fields only"),
+                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--prefix P", "segment-exact scope; expand a frontier row"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows (0 = unlimited)"),
+                ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
+                FMT_ROW_EN,
             ],
             examples: &[
+                ("ddc members app.apk", "member counts per class/package (frontier)"),
                 ("ddc members app.apk token", "methods/fields with \"token\" in the name"),
-                ("ddc members app.apk --class com.example.Foo", "every member of one class"),
-                ("ddc members app.apk onCreate --method", "method names only"),
+                ("ddc members app.apk --class com.example.Foo", "every member of one class, summarized"),
+                ("ddc members app.apk --class com.example.Foo --full", "every member row"),
             ],
         },
     ),
@@ -539,10 +574,19 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("FQCN", "class name, dotted or slashed"),
             ],
             opts: &[
+                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--prefix P", "segment-exact scope; expand a frontier row"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows (0 = unlimited)"),
+                ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
                 FMT_ROW_EN,
             ],
             examples: &[
+                ("ddc hierarchy app.apk java.lang.Object", "subclasses by package (frontier with counts)"),
+                ("ddc hierarchy app.apk java.lang.Object --sort count", "biggest packages first"),
+                ("ddc hierarchy app.apk java.lang.Object --full", "every relation row"),
                 ("ddc hierarchy app.apk androidx.fragment.app.FragmentActivity", "its supertypes and every subclass"),
             ],
         },
@@ -737,9 +781,17 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             ],
             opts: &[
                 ("-o, --output FILE", "写入条目的原始字节（二进制 XML 保持原样；stdout 输出为解码文本）"),
+                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--prefix P", "段级精确范围，用于展开目录行"),
+                ("--depth N", "在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "行序（count = 大类优先）"),
+                ("--limit N", "最多 N 行（0 = 不限）"),
+                ("--offset M", "跳过 M 行——从上一页结束处继续"),
             ],
             examples: &[
-                ("ddc res app.apk | head -40", "列出归档条目"),
+                ("ddc res app.apk", "归档目录摘要"),
+                ("ddc res app.apk --full | head -40", "平铺条目列表"),
+                ("ddc res app.apk --prefix res/drawable", "单个目录的文件"),
                 ("ddc res app.apk AndroidManifest.xml", "输出单个条目（二进制 XML 解码为文本）"),
                 ("ddc res app.apk resources.arsc -o arsc.bin", "保存条目的原始字节"),
             ],
@@ -755,12 +807,15 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-f, --filter TEXT", "只保留包含 TEXT 的字符串（大小写不敏感）"),
                 ("--with-locations", "将每个字符串映射到引用它的方法"),
+                ("--limit N", "最多 N 个字符串（0 = 不限）；JSON 附带 total/next_offset"),
+                ("--offset M", "跳过 M 个字符串——从上一页结束处继续"),
                 DEX_ZH,
                 FMT_ROW_ZH,
             ],
             examples: &[
                 ("ddc strings app.apk -f token", "包含 \"token\" 的字符串"),
                 ("ddc strings app.apk -f api_key --with-locations", "每个命中映射到引用它的方法"),
+                ("ddc strings app.apk --limit 50 --offset 100 --format json", "翻页字符串表"),
             ],
         },
     ),
@@ -776,12 +831,20 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-C, --class FQCN", "method/field 查询的所属类（默认精确，--fuzzy-class 改模糊）"),
                 ("--fuzzy-class", "所属类模糊匹配"),
+                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--prefix P", "段级精确范围，用于展开目录行"),
+                ("--depth N", "在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "行序（count = 大类优先）"),
+                ("--limit N", "最多 N 行（0 = 不限）"),
+                ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 OUT_FILE_ZH,
                 DEX_ZH,
                 FMT_ROW_ZH,
             ],
             examples: &[
-                ("ddc findrefs app.apk string api_key", "每个 \"api_key\" 字符串字面量位点"),
+                ("ddc findrefs app.apk string api_key", "哪些包在用 \"api_key\"（带计数的目录）"),
+                ("ddc findrefs app.apk string api_key --full", "全部命中行"),
+                ("ddc findrefs app.apk string http --sort count", "引用最多的包优先"),
                 ("ddc findrefs app.apk class okhttp3.OkHttpClient", "类在代码中的使用（new/check-cast/instance-of）"),
                 ("ddc findrefs app.apk method onCreate --class android/app/Activity", "Activity.onCreate 的调用点"),
                 ("ddc findrefs app.apk field CREATOR", "名为 CREATOR 的字段读写"),
@@ -798,10 +861,18 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("FQCN", "可选的所属类，用于缩小范围"),
             ],
             opts: &[
+                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--prefix P", "段级精确范围，用于展开目录行"),
+                ("--depth N", "在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "行序（count = 大类优先）"),
+                ("--limit N", "最多 N 行（0 = 不限）"),
+                ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
+                FMT_ROW_ZH,
             ],
             examples: &[
-                ("ddc callers app.apk sendMessage", "调用 sendMessage 的方法"),
+                ("ddc callers app.apk sendMessage", "哪些包在调用 sendMessage（目录）"),
+                ("ddc callers app.apk sendMessage --full", "全部调用位点行"),
                 ("ddc callers app.apk onCreate android/app/Activity", "把被调方法限定到一个所属类"),
             ],
         },
@@ -819,11 +890,20 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--fuzzy-class", "所属类模糊匹配"),
                 ("--method", "仅方法"),
                 ("--field", "仅字段"),
+                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--prefix P", "段级精确范围，用于展开目录行"),
+                ("--depth N", "在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "行序（count = 大类优先）"),
+                ("--limit N", "最多 N 行（0 = 不限）"),
+                ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
+                FMT_ROW_ZH,
             ],
             examples: &[
+                ("ddc members app.apk", "按类/包统计成员数（目录）"),
                 ("ddc members app.apk token", "名字含 \"token\" 的方法/字段"),
-                ("ddc members app.apk --class com.example.Foo", "单个类的全部成员"),
+                ("ddc members app.apk --class com.example.Foo", "单个类的全部成员（摘要）"),
+                ("ddc members app.apk --class com.example.Foo --full", "单个类的全部成员行"),
                 ("ddc members app.apk onCreate --method", "只看方法名"),
             ],
         },
@@ -837,10 +917,19 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("FQCN", "类名，点分/斜杠均可"),
             ],
             opts: &[
+                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--prefix P", "段级精确范围，用于展开目录行"),
+                ("--depth N", "在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "行序（count = 大类优先）"),
+                ("--limit N", "最多 N 行（0 = 不限）"),
+                ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
                 FMT_ROW_ZH,
             ],
             examples: &[
+                ("ddc hierarchy app.apk java.lang.Object", "按包统计子类（带计数的目录）"),
+                ("ddc hierarchy app.apk java.lang.Object --sort count", "大包优先"),
+                ("ddc hierarchy app.apk java.lang.Object --full", "全部关系行"),
                 ("ddc hierarchy app.apk androidx.fragment.app.FragmentActivity", "其超类与全部子类"),
             ],
         },
@@ -1981,7 +2070,7 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
         let scope_classes = page.names.len();
         let mut rows = crate::api::class_tree(&page.names, prefix.as_deref(), depth);
         if sort_count {
-            rows.sort_by(|a, b| b.classes.cmp(&a.classes).then_with(|| a.path.cmp(&b.path)));
+            rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
         }
         let rp = crate::api::window_rows(rows, offset, limit);
         let rows_json: Vec<serde_json::Value> = rp
@@ -1991,10 +2080,10 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
                 serde_json::json!({
                     "path": row.path,
                     "kind": match row.kind {
-                        crate::api::TreeKind::Class => "class",
-                        crate::api::TreeKind::Package => "package",
+                        crate::api::TreeKind::Leaf => "class",
+                        crate::api::TreeKind::Group => "package",
                     },
-                    "classes": row.classes,
+                    "classes": row.count,
                 })
             })
             .collect();
@@ -2028,8 +2117,8 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
         }
         for row in &rp.rows {
             match row.kind {
-                crate::api::TreeKind::Package => println!("{}/ ({})", row.path, row.classes),
-                crate::api::TreeKind::Class => println!("{}", row.path),
+                crate::api::TreeKind::Group => println!("{}/ ({})", row.path, row.count),
+                crate::api::TreeKind::Leaf => println!("{}", row.path),
             }
         }
         if limit != 0 || offset != 0 {
@@ -2516,6 +2605,13 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
     let mut dex_filters: Vec<String> = Vec::new();
     let mut out: Option<PathBuf> = None;
     let mut format = OutFormat::Auto;
+    let mut prefix: Option<String> = None;
+    let mut full = false;
+    let mut summary_explicit = false;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -2535,6 +2631,62 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
                 i += 1;
             }
             "--fuzzy-class" => fuzzy_class = true,
+            "--full" => full = true,
+            "--summary" | "--tree" => summary_explicit = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_class_prefix(v);
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
+            "--limit" => {
+                limit = parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = parse_count(args.get(i + 1), "--offset")?;
+                i += 1;
+            }
             "-d" | "--dex" => {
                 dex_filters.push(
                     args.get(i + 1)
@@ -2567,6 +2719,24 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
             )
         );
     }
+    if full && summary_explicit {
+        bail!(
+            "{}",
+            bi!(
+                "--full and --summary are mutually exclusive",
+                "--full 与 --summary 互斥"
+            )
+        );
+    }
+    if full && (depth.is_some() || sort_count) {
+        bail!(
+            "{}",
+            bi!(
+                "--depth and --sort only apply to the summary view (the default); drop --full",
+                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+            )
+        );
+    }
     let input = PathBuf::from(&positionals[0]);
     let kind = positionals[1].clone();
     let value = positionals[2].clone();
@@ -2590,29 +2760,6 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
         ),
     };
 
-    if format != OutFormat::Text && out.is_none() {
-        // `query` consumed value/class — rebuild them for the typed core.
-        let (v, c) = match &query {
-            findrefs::FindQuery::String(v) => (v.clone(), None),
-            findrefs::FindQuery::Type(v) => (v.clone(), None),
-            findrefs::FindQuery::Method { class, name, .. }
-            | findrefs::FindQuery::Field { class, name, .. } => {
-                (name.clone(), class.clone())
-            }
-        };
-        let rows = crate::api::ref_rows(
-            &input,
-            &kind,
-            &v,
-            c.as_deref(),
-            fuzzy_class,
-            &dex_filters,
-        )?;
-        let rf = resolve_format(format);
-        if rf != ResolvedFormat::Text {
-            return print_report(rf, &rows);
-        }
-    }
     let t_wall = std::time::Instant::now();
     let (mut hits, t_cd) = findrefs_scan(&input, &query, &dex_filters)?;
     let t_scan = t_wall.elapsed();
@@ -2625,19 +2772,146 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
         );
     }
     hits.sort_by(|a, b| a.class.cmp(&b.class).then(a.method.cmp(&b.method)));
+    if let Some(p) = &prefix {
+        hits.retain(|h| crate::api::under_prefix(&h.class.replace('/', "."), p, '.'));
+    }
+    let rf = resolve_format(format);
+    let summary = !full;
 
-    // Column format like `info`: header row first, then one row per
-    // METHOD (multi-hit methods keep one line; the refs column lists
-    // every matched target, "; " separated). Fixed columns keep the
-    // class/method boundary explicit without the pipe-delimited blob.
-    let lines: Vec<String> = hits
+    if summary {
+        // 按 owner 类做前缀目录：一行 = 分叉包（命中数）或类（命中数）。
+        let keys: Vec<String> = hits.iter().map(|h| h.class.replace('/', ".")).collect();
+        let mut rows = crate::api::prefix_tree(
+            keys.iter().map(|k| (k.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '.',
+        );
+        if sort_count {
+            rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
+        }
+        let rp = crate::api::window_rows(rows, offset, limit);
+        let rows_json: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "path": r.path,
+                    "kind": match r.kind {
+                        crate::api::TreeKind::Leaf => "class",
+                        crate::api::TreeKind::Group => "package",
+                    },
+                    "count": r.count,
+                })
+            })
+            .collect();
+        if out.is_none() && rf != ResolvedFormat::Text {
+            match rf {
+                ResolvedFormat::Jsonl => {
+                    for row in &rows_json {
+                        println!("{}", serde_json::to_string(row)?);
+                    }
+                }
+                ResolvedFormat::Json => {
+                    let v = serde_json::json!({
+                        "view": "tree",
+                        "prefix": prefix.unwrap_or_default(),
+                        "depth": depth,
+                        "total": rp.total,
+                        "offset": rp.offset,
+                        "limit": rp.limit,
+                        "returned": rp.rows.len(),
+                        "next_offset": rp.next_offset,
+                        "rows": rows_json,
+                    });
+                    print_report(rf, &v)?;
+                }
+                ResolvedFormat::Table | ResolvedFormat::Markdown => {
+                    print_report(rf, &rows_json)?;
+                }
+                ResolvedFormat::Text => unreachable!(),
+            }
+            return Ok(());
+        }
+        let lines: Vec<String> = rp
+            .rows
+            .iter()
+            .map(|r| match r.kind {
+                crate::api::TreeKind::Group => format!("{}/ ({})", r.path, r.count),
+                crate::api::TreeKind::Leaf => r.path.clone(),
+            })
+            .collect();
+        write_lines(&out, &lines, t0, format!(
+            "findrefs {} → {} row(s)",
+            query.kind(),
+            lines.len()
+        ))?;
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
+        }
+        return Ok(());
+    }
+
+    // 平铺视图：行 = 命中方法（与原行为一致），窗口作用在行上。
+    let rp = crate::api::window_rows(hits, offset, limit);
+    let rows: Vec<crate::api::RefRow> = rp
+        .rows
+        .iter()
+        .map(|h| crate::api::RefRow {
+            dex: h.dex.clone(),
+            kind: h.insn.to_string(),
+            class: h.class.replace('/', "."),
+            method: h.method.clone(),
+            targets: h.targets.clone(),
+        })
+        .collect();
+    if out.is_none() && rf != ResolvedFormat::Text {
+        match rf {
+            ResolvedFormat::Jsonl => print_report(rf, &rows)?,
+            ResolvedFormat::Json => {
+                if limit != 0 || offset != 0 {
+                    let v = serde_json::json!({
+                        "total": rp.total,
+                        "offset": rp.offset,
+                        "limit": rp.limit,
+                        "returned": rp.rows.len(),
+                        "next_offset": rp.next_offset,
+                        "data": rows,
+                    });
+                    print_report(rf, &v)?;
+                } else {
+                    print_report(rf, &rows)?;
+                }
+            }
+            ResolvedFormat::Table | ResolvedFormat::Markdown => print_report(rf, &rows)?,
+            ResolvedFormat::Text => unreachable!(),
+        }
+        return Ok(());
+    }
+
+    // 列格式：首行表头，之后每个方法一行（多命中方法合并 refs 列）。
+    let lines: Vec<String> = rows
         .iter()
         .map(|h| {
             format!(
                 "{:10}  {:<12}  {} {}  {}",
                 h.dex,
-                h.insn,
-                h.class,
+                h.kind,
+                // 文本列沿用旧版的斜杠内部名（--full 与旧输出逐字节一致）。
+                h.class.replace('.', "/"),
                 h.method,
                 h.targets.join("; ")
             )
@@ -2653,23 +2927,56 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
     all.extend(lines);
     match out {
         Some(f) => {
+            write_lines(&Some(f), &all, t0, format!(
+                "findrefs {} → {} method(s)",
+                query.kind(),
+                all.len() - 1
+            ))?;
+        }
+        None => {
+            for l in &all {
+                println!("{l}");
+            }
+        }
+    }
+    if limit != 0 || offset != 0 {
+        eprintln!(
+            "{}",
+            bif!(
+                "ddc: showing {0} of {1} hits (offset {2}{3})",
+                "ddc：显示 {0}/{1} 条命中（偏移 {2}{3}）";
+                rp.rows.len(),
+                rp.total,
+                rp.offset,
+                match rp.next_offset {
+                    Some(n) => format!(", next_offset {n}"),
+                    None => String::new(),
+                }
+            )
+        );
+    }
+    Ok(())
+}
+
+/// 行输出到 `-o` 文件（带目录创建与一行摘要到 stderr），否则逐行 stdout。
+fn write_lines(out: &Option<PathBuf>, lines: &[String], t0: std::time::Instant, note: String) -> Result<()> {
+    match out {
+        Some(f) => {
             if let Some(parent) = f.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let mut text = all.join("\n");
+            let mut text = lines.join("\n");
             text.push('\n');
-            std::fs::write(&f, &text)?;
+            std::fs::write(f, &text)?;
             eprintln!(
-                "ddc: findrefs {} → {} method(s) in {} to {}",
-                query.kind(),
-                all.len() - 1,
+                "ddc: {} in {} to {}",
+                note,
                 fmt_secs(t0.elapsed()),
                 f.display()
             );
         }
         None => {
-            // stdout mode: results only — no trailing timing noise.
-            for l in &all {
+            for l in lines {
                 println!("{l}");
             }
         }

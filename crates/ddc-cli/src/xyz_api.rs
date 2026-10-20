@@ -115,17 +115,27 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
         let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
         let mut rows = api::class_tree(&page.names, prefix.as_deref(), depth);
         if a.sort == "count" {
-            rows.sort_by(|x, y| y.classes.cmp(&x.classes).then_with(|| x.path.cmp(&y.path)));
+            rows.sort_by(|x, y| y.count.cmp(&x.count).then_with(|| x.path.cmp(&y.path)));
         }
         let rp = api::window_rows(rows, offset, limit);
-        return Ok(rp
+        let mut out: Vec<String> = rp
             .rows
             .iter()
             .map(|r| match r.kind {
-                api::TreeKind::Package => format!("{}/ ({})", r.path, r.classes),
-                api::TreeKind::Class => r.path.clone(),
+                api::TreeKind::Group => format!("{}/ ({})", r.path, r.count),
+                api::TreeKind::Leaf if r.count > 1 => format!("{} ({})", r.path, r.count),
+                api::TreeKind::Leaf => r.path.clone(),
             })
-            .collect());
+            .collect();
+        if let Some(next) = rp.next_offset {
+            out.push(format!(
+                "(truncated: showing {} of {} rows; pass offset={} to continue)",
+                rp.rows.len(),
+                rp.total,
+                next
+            ));
+        }
+        return Ok(out);
     }
     let page = api::class_names(
         &p(&a.input),
@@ -136,7 +146,17 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
         limit,
     )
     .map_err(map_err)?;
-    Ok(page.names)
+    let mut out = page.names;
+    let end = offset.saturating_add(out.len());
+    if end < page.total {
+        out.push(format!(
+            "(truncated: showing {} of {} classes; pass offset={} to continue)",
+            out.len(),
+            page.total,
+            end
+        ));
+    }
+    Ok(out)
 }
 
 fn empty_or_some(s: &str) -> Option<&str> {
@@ -193,12 +213,46 @@ struct FindRefsArgs {
     class: String,
     #[xyz(desc = "match the owner class fuzzily")]
     fuzzy_class: bool,
+    #[xyz(desc = "flat hit rows (default: prefix frontier of owner classes)")]
+    full: bool,
+    #[xyz(desc = "segment-exact owner-class scope (a.b matches a.b and a.b.*)")]
+    prefix: String,
+    #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive)")]
+    depth: i64,
+    #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
+    sort: String,
+    #[xyz(desc = "maximum rows to return (0 = unlimited)")]
+    limit: i64,
+    #[xyz(desc = "number of rows to skip")]
+    offset: i64,
     #[xyz(desc = "restrict images whose entry name contains this (repeatable)")]
     dex: Vec<String>,
 }
 
-fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<api::RefRow>> {
-    api::ref_rows(
+fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "limit/offset/depth must be non-negative".to_string(),
+        ));
+    }
+    if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            format!("sort must be name|count, got {:?}", a.sort),
+        ));
+    }
+    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+        ));
+    }
+    let prefix = {
+        let n = api::normalize_class_prefix(&a.prefix);
+        if n.is_empty() { None } else { Some(n) }
+    };
+    let mut rows = api::ref_rows(
         &p(&a.input),
         &a.kind,
         &a.query,
@@ -206,7 +260,71 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<api::RefRow>> {
         a.fuzzy_class,
         &a.dex,
     )
-    .map_err(map_err)
+    .map_err(map_err)?;
+    if let Some(pfx) = &prefix {
+        rows.retain(|r| api::under_prefix(&r.class, pfx, '.'));
+    }
+    let limit = a.limit as usize;
+    let offset = a.offset as usize;
+    if !a.full {
+        let keys: Vec<String> = rows.iter().map(|r| r.class.clone()).collect();
+        let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
+        let mut tree = api::prefix_tree(
+            keys.iter().map(|k| (k.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '.',
+        );
+        if a.sort == "count" {
+            tree.sort_by(|x, y| y.count.cmp(&x.count).then_with(|| x.path.cmp(&y.path)));
+        }
+        let rp = api::window_rows(tree, offset, limit);
+        let mut out: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "path": r.path,
+                    "kind": match r.kind {
+                        api::TreeKind::Leaf => "class",
+                        api::TreeKind::Group => "package",
+                    },
+                    "count": r.count,
+                })
+            })
+            .collect();
+        if let Some(next) = rp.next_offset {
+            // 与树行同键：MCP 文本按首行键渲染表格，异键对象会被吞掉。
+            out.push(serde_json::json!({
+                "path": format!(
+                    "(truncated: showing {} of {} rows; pass offset={} to continue)",
+                    rp.rows.len(), rp.total, next
+                ),
+                "kind": "truncated",
+                "count": 0,
+            }));
+        }
+        return Ok(out);
+    }
+    let rp = api::window_rows(rows, offset, limit);
+    let mut out: Vec<serde_json::Value> = rp
+        .rows
+        .iter()
+        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+        .collect();
+    if let Some(next) = rp.next_offset {
+        out.push(serde_json::json!({
+            "dex": "",
+            "kind": "truncated",
+            "class": format!(
+                "showing {} of {} hits; pass offset={} to continue",
+                rp.rows.len(), rp.total, next
+            ),
+            "method": "",
+            "refs": [],
+        }));
+    }
+    Ok(out)
 }
 
 // ---- ddc.strings ---------------------------------------------------------------
@@ -219,13 +337,45 @@ struct StringsArgs {
     filter: String,
     #[xyz(desc = "map each string to its referencing methods")]
     with_locations: bool,
+    #[xyz(desc = "maximum rows to return (0 = unlimited)")]
+    limit: i64,
+    #[xyz(desc = "number of rows to skip")]
+    offset: i64,
     #[xyz(desc = "restrict images whose entry name contains this (repeatable)")]
     dex: Vec<String>,
 }
 
-fn strings(_ctx: &Ctx, a: &StringsArgs) -> XyzResult<Vec<api::StringRow>> {
-    api::string_rows(&p(&a.input), empty_or_some(&a.filter), a.with_locations, &a.dex)
-        .map_err(map_err)
+fn strings(_ctx: &Ctx, a: &StringsArgs) -> XyzResult<Vec<serde_json::Value>> {
+    if a.limit < 0 || a.offset < 0 {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "limit/offset must be non-negative".to_string(),
+        ));
+    }
+    let rows = api::string_rows(
+        &p(&a.input),
+        empty_or_some(&a.filter),
+        a.with_locations,
+        &a.dex,
+    )
+    .map_err(map_err)?;
+    let rp = api::window_rows(rows, a.offset as usize, a.limit as usize);
+    let mut out: Vec<serde_json::Value> = rp
+        .rows
+        .iter()
+        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+        .collect();
+    if let Some(next) = rp.next_offset {
+        // 与 StringRow 同键（首行无 used_by 时不带该键），保证 MCP 表格可见。
+        out.push(serde_json::json!({
+            "dex": "",
+            "string": format!(
+                "(truncated: showing {} of {} strings; pass offset={} to continue)",
+                rp.rows.len(), rp.total, next
+            ),
+        }));
+    }
+    Ok(out)
 }
 
 // ---- ddc.hierarchy -------------------------------------------------------------
@@ -236,12 +386,140 @@ struct HierarchyArgs {
     input: String,
     #[xyz(desc = "class name, dotted or slashed", required)]
     class: String,
+    #[xyz(desc = "flat relation rows (default: per-relation prefix frontier)")]
+    full: bool,
+    #[xyz(desc = "segment-exact scope on the result classes (a.b matches a.b and a.b.*)")]
+    prefix: String,
+    #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive)")]
+    depth: i64,
+    #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
+    sort: String,
+    #[xyz(desc = "maximum rows to return (0 = unlimited)")]
+    limit: i64,
+    #[xyz(desc = "number of rows to skip")]
+    offset: i64,
     #[xyz(desc = "restrict images whose entry name contains this (repeatable)")]
     dex: Vec<String>,
 }
 
-fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<api::RelationRow>> {
-    api::hierarchy_rows(&p(&a.input), &a.class, &a.dex).map_err(map_err)
+fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>> {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "limit/offset/depth must be non-negative".to_string(),
+        ));
+    }
+    if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            format!("sort must be name|count, got {:?}", a.sort),
+        ));
+    }
+    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+        ));
+    }
+    let prefix = {
+        let n = api::normalize_class_prefix(&a.prefix);
+        if n.is_empty() { None } else { Some(n) }
+    };
+    let mut rows = api::hierarchy_rows(&p(&a.input), &a.class, &a.dex).map_err(map_err)?;
+    if let Some(pfx) = &prefix {
+        rows.retain(|r| {
+            api::under_prefix(&hierarchy_plain_pub(&r.class).replace('/', "."), pfx, '.')
+        });
+    }
+    let limit = a.limit as usize;
+    let offset = a.offset as usize;
+    if !a.full {
+        const ORDER: [&str; 5] = ["class", "extends", "implements", "sub", "impl"];
+        let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
+        let mut combined: Vec<(usize, String, api::TreeRow)> = Vec::new();
+        for (ri, rel) in ORDER.iter().enumerate() {
+            let keys: Vec<String> = rows
+                .iter()
+                .filter(|r| r.relation == *rel)
+                .map(|r| hierarchy_plain_pub(&r.class).replace('/', "."))
+                .collect();
+            if keys.is_empty() {
+                continue;
+            }
+            let tree = api::prefix_tree(
+                keys.iter().map(|k| (k.as_str(), 1usize)),
+                prefix.as_deref(),
+                depth,
+                '.',
+            );
+            for row in tree {
+                combined.push((ri, rel.to_string(), row));
+            }
+        }
+        if a.sort == "count" {
+            combined.sort_by(|x, y| {
+                y.2.count
+                    .cmp(&x.2.count)
+                    .then_with(|| x.2.path.cmp(&y.2.path))
+                    .then_with(|| x.0.cmp(&y.0))
+            });
+        } else {
+            combined.sort_by(|x, y| x.0.cmp(&y.0).then_with(|| x.2.path.cmp(&y.2.path)));
+        }
+        let rp = api::window_rows(combined, offset, limit);
+        let mut out: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|(_, rel, r)| {
+                serde_json::json!({
+                    "relation": rel,
+                    "path": r.path,
+                    "kind": match r.kind {
+                        api::TreeKind::Leaf => "class",
+                        api::TreeKind::Group => "package",
+                    },
+                    "count": r.count,
+                })
+            })
+            .collect();
+        if let Some(next) = rp.next_offset {
+            out.push(serde_json::json!({
+                "relation": "truncated",
+                "path": format!(
+                    "(showing {} of {} rows; pass offset={} to continue)",
+                    rp.rows.len(), rp.total, next
+                ),
+                "kind": "truncated",
+                "count": 0,
+            }));
+        }
+        return Ok(out);
+    }
+    let rp = api::window_rows(rows, offset, limit);
+    let mut out: Vec<serde_json::Value> = rp
+        .rows
+        .iter()
+        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+        .collect();
+    if let Some(next) = rp.next_offset {
+        out.push(serde_json::json!({
+            "dex": "",
+            "relation": "truncated",
+            "class": format!(
+                "showing {} of {} rows; pass offset={} to continue",
+                rp.rows.len(), rp.total, next
+            ),
+        }));
+    }
+    Ok(out)
+}
+
+/// `L…;` descriptor rows (extends/implements) → plain name.
+fn hierarchy_plain_pub(class: &str) -> &str {
+    class
+        .strip_prefix('L')
+        .and_then(|s| s.strip_suffix(';'))
+        .unwrap_or(class)
 }
 
 // ---- ddc.disasm ----------------------------------------------------------------
@@ -313,6 +591,23 @@ fn mcp_read() -> MCPHints {
     }
 }
 
+/// MCP 通道对列表类工具默认封顶 500 行：agent 拿到的单次结果有界，
+/// 超出部分由响应末尾的 truncated 提示行给出 next_offset。CLI/REST
+/// 不受影响（默认 0 = 不限）；显式传 limit=0 仍可拿全量。
+fn mcp_capped() -> MCPHints {
+    let mut h = mcp_read();
+    h.fields.insert(
+        "limit".to_string(),
+        xyz_rust::MCPFieldHint {
+            default: Some(serde_json::json!(500)),
+            description: Some(
+                "maximum rows (MCP default 500; 0 = unlimited)".to_string(),
+            ),
+        },
+    );
+    h
+}
+
 /// Register every ddc query command and dispatch `args` through the xyz
 /// pipeline. Only reached with `serve` / `mcp` as the first argument
 /// (see main); returns the process exit code.
@@ -330,7 +625,7 @@ pub fn run(args: Vec<String>) -> i32 {
                 .summary("Class structure as a prefix frontier with counts (full=true: flat names)")
                 .cli(skip_cli())
                 .http(http("/classes"))
-                .mcp(mcp_read()),
+                .mcp(mcp_capped()),
             &xyz_rust::define("ddc.getclass", getclass)
                 .summary("Decompile one class (nested classes included)")
                 .cli(skip_cli())
@@ -342,20 +637,20 @@ pub fn run(args: Vec<String>) -> i32 {
                 .http(http("/method"))
                 .mcp(mcp_read()),
             &xyz_rust::define("ddc.findrefs", findrefs)
-                .summary("Cross-references to a string / type / method / field")
+                .summary("Cross-references; default owner-class frontier (full=true: hit rows)")
                 .cli(skip_cli())
                 .http(http("/findrefs"))
-                .mcp(mcp_read()),
+                .mcp(mcp_capped()),
             &xyz_rust::define("ddc.strings", strings)
-                .summary("String table, optionally with referencing methods")
+                .summary("String table; pageable with limit/offset (MCP caps at 500)")
                 .cli(skip_cli())
                 .http(http("/strings"))
-                .mcp(mcp_read()),
+                .mcp(mcp_capped()),
             &xyz_rust::define("ddc.hierarchy", hierarchy)
-                .summary("Supertypes and subtypes of a class")
+                .summary("Super/subtypes; default per-relation frontier (full=true: rows)")
                 .cli(skip_cli())
                 .http(http("/hierarchy"))
-                .mcp(mcp_read()),
+                .mcp(mcp_capped()),
             &xyz_rust::define("ddc.disasm", disasm)
                 .summary("Raw bytecode listing of a class or method")
                 .cli(skip_cli())

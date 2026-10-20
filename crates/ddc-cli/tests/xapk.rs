@@ -186,7 +186,7 @@ fn xapk_full_pipeline() {
     assert!(out.contains("com.reqable.android"), "{}", out);
 
     // findrefs scans every inner APK's dex.
-    let o = run(ddc().arg("findrefs").arg(&xapk).arg("string").arg("hi"));
+    let o = run(ddc().arg("findrefs").arg(&xapk).arg("string").arg("hi").arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains("\"hi \""), "{}", stdout(&o));
 
@@ -219,7 +219,8 @@ fn xapk_dex_filter_targets_inner_apk() {
         .arg("--dex")
         .arg("base")
         .arg("string")
-        .arg("hi"));
+        .arg("hi")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains("\"hi \""));
 
@@ -230,7 +231,8 @@ fn xapk_dex_filter_targets_inner_apk() {
         .arg("--dex")
         .arg("config.arm64")
         .arg("string")
-        .arg("hi"));
+        .arg("hi")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains("\"hi \""));
 

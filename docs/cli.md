@@ -192,42 +192,56 @@ clean (timing prints only with `-o`).
   (`.MainActivity` → package-prefixed; bare word → package + word) and
   activity-alias `targetActivity`; then verified against the dex images
   (the defining image is reported).
-- **`ddc res <apk> [entry] [-o FILE]`** — without an entry: every archive
-  entry (method, compressed size; XAPK inner APKs flattened into
-  `apk!name` labels). With an entry: dumps it — binary XML (first chunk
-  `0x0003`) decodes through the AXML decoder, text prints as-is, binary
-  content is saved via `-o` (or the error tells you to). Entry matching:
-  exact name first, then a unique substring.
+- **`ddc res <apk> [entry] [-o FILE]`** — without an entry: a directory
+  summary of the archive with per-prefix entry counts (`res/drawable/
+  (1234)`), `--full` for the flat table (method, compressed size; XAPK
+  inner APKs flattened into `apk!name` labels), `--prefix` to expand a
+  directory, plus `--depth/--sort/--limit/--offset`. With an entry: dumps
+  it — binary XML (first chunk `0x0003`) decodes through the AXML
+  decoder, text prints as-is, binary content is saved via `-o` (or the
+  error tells you to). Entry matching: exact name first, then a unique
+  substring.
 
 ### Find things
 
 - **`ddc strings <input> [-f TEXT] [--with-locations]`** — the string
   table (one row per string). `-f` filters by substring;
   `--with-locations` walks every method's const-string sites and adds a
-  `used-by` column mapping each hit to its owner methods.
+  `used-by` column mapping each hit to its owner methods. `--limit` /
+  `--offset` page the rows (JSON gains `total`/`next_offset`); the MCP
+  tool caps the default at 500 rows and appends a truncation hint.
 - **`ddc findrefs <input> <string|type|class|method|field> <query> [--class
   FQCN] [--fuzzy-class] [-o FILE]`** — every reference to a string
   literal / type / method call site / field access (`class` is a plain-
   word alias for `type`; definition-level relations such as
-  extends/implements belong to `ddc hierarchy`). Output is columnar
-  with a header (`dex kind class method refs`), **one row per method**:
-  multiple hits aggregate into `refs` (`; `-separated, deduped); `kind`
-  is the first hit's instruction. Match semantics: queries are
-  case-insensitive substrings; `--class` defaults to exact (dots,
-  slashes and `L…;` descriptor forms all normalize) and `--fuzzy-class`
-  widens it to substring.
+  extends/implements belong to `ddc hierarchy`). The default view is a
+  prefix frontier of the **owning classes** with per-package hit counts
+  (which packages use this string?), drilling with `--prefix`/`--depth`;
+  `--full` prints every hit row: columnar with a header (`dex kind class
+  method refs`), **one row per method**, multiple hits aggregate into
+  `refs` (`; `-separated, deduped). `--sort`, `--limit` and `--offset`
+  apply to either view. Match semantics: queries are case-insensitive
+  substrings; `--class` defaults to exact (dots, slashes and `L…;`
+  descriptor forms all normalize) and `--fuzzy-class` widens it to
+  substring.
 - **`ddc callers <input> NAME [FQCN]`** — who invokes method NAME (the
-  findrefs method machinery, scoped to one class optionally).
+  findrefs method machinery, scoped to one class optionally; accepts the
+  same `--full/--prefix/--depth/--sort/--limit/--offset` view flags).
 - **`ddc members <input> [NAME] [--class FQCN] [--fuzzy-class]
   [--method|--field]`** — method/field name search over the method and
-  field id tables; `--method` / `--field` restrict the kind.
+  field id tables; `--method` / `--field` restrict the kind. The default
+  view groups matches by owning class/package with counts; `--full`
+  prints one row per member; `--format json` is available.
 
 ### Understand structure
 
 - **`ddc hierarchy <input> FQCN`** — the class's lineage: `class` /
   `extends` / `implements` forward, `sub` / `impl` for every class that
   extends or implements it. Works across images (name-matched when the
-  parent lives in another dex).
+  parent lives in another dex). The default view is a per-relation
+  prefix frontier (`sub com.example/ (123)`), so a class with 150k
+  subtypes fits on one screen; `--full` prints every relation row,
+  `--prefix/--depth/--sort/--limit/--offset` shape the view.
 - **`ddc largest <input> [-n N]`** — top-N methods by instruction count
   (find the monsters; default 20).
 - **`ddc disasm <input> FQCN[.method]`** — raw bytecode of a class or

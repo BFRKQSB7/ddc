@@ -20,11 +20,14 @@ pub(crate) fn for_each_image(
     f: &mut dyn FnMut(&str, &[u8]),
 ) -> Result<()> {
     let files = expand_inputs(std::slice::from_ref(input))?;
-    let images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
+    let mut images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
+    // 自然顺序输出的分波解压：每波最多 8 个映像（内存有界），但回调顺序
+    // 与输入顺序一致——翻页契约要求可文档化的稳定序（旧实现取末尾波，
+    // 多 dex 时输出序为反向波序）。
     const WAVE: usize = 8;
-    let mut rest = images;
-    while !rest.is_empty() {
-        let wave = rest.split_off(rest.len().saturating_sub(WAVE));
+    while !images.is_empty() {
+        let take = WAVE.min(images.len());
+        let wave: Vec<_> = images.drain(..take).collect();
         for (label, raw) in inflate_images(wave)? {
             f(&label, &raw);
         }
@@ -89,6 +92,8 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
     let mut with_loc = false;
     let mut rest: Vec<String> = Vec::new();
     let mut format = crate::OutFormat::Auto;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -103,6 +108,14 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
             "--with-locations" => with_loc = true,
             "--format" => {
                 format = crate::parse_format(&format_value(args, i)?)?;
+                i += 1;
+            }
+            "--limit" => {
+                limit = crate::parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = crate::parse_count(args.get(i + 1), "--offset")?;
                 i += 1;
             }
             "-d" | "--dex" => {
@@ -125,14 +138,27 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
         i += 1;
     }
     let common = parse_common(&rest, "strings")?;
+    let rows =
+        crate::api::string_rows(&common.input, filter.as_deref(), with_loc, &common.dex_filters)?;
+    let rp = crate::api::window_rows(rows, offset, limit);
+    let rf = crate::resolve_format(format);
 
-    if format != crate::OutFormat::Text {
-        let rows =
-            crate::api::string_rows(&common.input, filter.as_deref(), with_loc, &common.dex_filters)?;
-        let rf = crate::resolve_format(format);
-        if rf != crate::ResolvedFormat::Text {
-            return crate::print_report(rf, &rows);
+    if rf == crate::ResolvedFormat::Jsonl {
+        return crate::print_report(rf, &rp.rows);
+    }
+    if rf != crate::ResolvedFormat::Text {
+        if limit != 0 || offset != 0 {
+            let v = serde_json::json!({
+                "total": rp.total,
+                "offset": rp.offset,
+                "limit": rp.limit,
+                "returned": rp.rows.len(),
+                "next_offset": rp.next_offset,
+                "data": rp.rows,
+            });
+            return crate::print_report(rf, &v);
         }
+        return crate::print_report(rf, &rp.rows);
     }
 
     println!(
@@ -144,98 +170,30 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
             bi!("string", "字符串")
         }
     );
-    for_each_image(&common.input, &common.dex_filters, &mut |label, image| {
-        let dex_name = label
-            .rsplit_once('!')
-            .map(|(_, e)| e)
-            .unwrap_or(label)
-            .to_string();
-        let Ok(dex) = RawDex::parse(image) else {
-            return;
-        };
-        // Matching strings (SIMD memmem over raw bytes).
-        let needle = filter.as_deref().map(str::as_bytes);
-        let matched: std::collections::BTreeMap<u32, ()> = (0..dex.str_n as u32)
-            .filter(|&idx| {
-                let Some(bytes) = dex.string_bytes(idx) else {
-                    return false;
-                };
-                match needle {
-                    Some(f) => bytes.len() >= f.len() && bytes.windows(f.len()).any(|w| w == f),
-                    None => true,
-                }
-            })
-            .map(|idx| (idx, ()))
-            .collect();
-        // Exact usage locations: walk every method's const-string sites.
-        let mut users: std::collections::HashMap<u32, Vec<String>> =
-            std::collections::HashMap::new();
-        if with_loc {
-            for ci in 0..dex.cls_n {
-                let Some((ty, _, _, cdo, _)) = dex.class_def_parts(ci) else {
-                    continue;
-                };
-                let class = dex.class_name(ty);
-                let Some(methods) = dex.methods_of(cdo as usize) else {
-                    continue;
-                };
-                for (midx, _acc, code_off) in methods {
-                    if code_off == 0 || code_off as usize + 16 > dex.d.len() {
-                        continue;
-                    }
-                    let insns = u32::from_le_bytes([
-                        dex.d[code_off as usize + 12],
-                        dex.d[code_off as usize + 13],
-                        dex.d[code_off as usize + 14],
-                        dex.d[code_off as usize + 15],
-                    ]) as usize;
-                    let start = code_off as usize + 16;
-                    let end = (start + 2 * insns).min(dex.d.len());
-                    if start >= end {
-                        continue;
-                    }
-                    let owner = dex
-                        .method_parts(midx)
-                        .map(|(_, p, nb)| {
-                            format!("{} {}{}", class, decode_mutf8_lossy(nb), dex.proto_desc(p))
-                        })
-                        .unwrap_or_default();
-                    ddc_dex::insn::scan_instructions(&dex.d[start..end], &mut |op, _pc, bytes| {
-                        if op != 0x1a && op != 0x1b {
-                            return;
-                        }
-                        let lo = 2 * (_pc + 1);
-                        let idx = if op == 0x1b && lo + 4 <= bytes.len() {
-                            u32::from_le_bytes([
-                                bytes[lo],
-                                bytes[lo + 1],
-                                bytes[lo + 2],
-                                bytes[lo + 3],
-                            ])
-                        } else if lo + 2 <= bytes.len() {
-                            u16::from_le_bytes([bytes[lo], bytes[lo + 1]]) as u32
-                        } else {
-                            return;
-                        };
-                        if matched.contains_key(&idx) {
-                            users.entry(idx).or_default().push(owner.clone());
-                        }
-                    });
-                }
-            }
+    for r in &rp.rows {
+        if r.used_by.is_empty() {
+            println!("{:10}  {}", r.dex, r.string);
+        } else {
+            println!("{:10}  {}  {}", r.dex, r.string, r.used_by.join("; "));
         }
-        for &idx in matched.keys() {
-            let s = decode_mutf8_lossy(dex.string_bytes(idx).unwrap_or(&[]));
-            match users.get(&idx) {
-                Some(u) if !u.is_empty() => {
-                    let mut uniq: Vec<&str> = u.iter().map(|m| m.as_str()).collect();
-                    uniq.dedup();
-                    println!("{:10}  {:?}  {}", dex_name, s, uniq.join("; "))
+    }
+    if limit != 0 || offset != 0 {
+        eprintln!(
+            "{}",
+            bif!(
+                "ddc: showing {0} of {1} strings (offset {2}{3})",
+                "ddc：显示 {0}/{1} 个字符串（偏移 {2}{3}）";
+                rp.rows.len(),
+                rp.total,
+                rp.offset,
+                match rp.next_offset {
+                    Some(n) => format!(", next_offset {n}"),
+                    None => String::new(),
                 }
-                _ => println!("{:10}  {:?}", dex_name, s),
-            }
-        }
-    })
+            )
+        );
+    }
+    Ok(())
 }
 
 // ---- members ---------------------------------------------------------------
@@ -245,6 +203,14 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
     let mut class: Option<String> = None;
     let mut fuzzy_class = false;
     let mut kind_want: Option<&str> = None; // method | field
+    let mut format = crate::OutFormat::Auto;
+    let mut prefix: Option<String> = None;
+    let mut full = false;
+    let mut summary_explicit = false;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -258,6 +224,66 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
             }
             "--fuzzy-class" => fuzzy_class = true,
             "--method" | "--field" => kind_want = Some(args[i].trim_start_matches('-')),
+            "--format" => {
+                format = crate::parse_format(&format_value(args, i)?)?;
+                i += 1;
+            }
+            "--full" => full = true,
+            "--summary" | "--tree" => summary_explicit = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_class_prefix(v);
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
+            "--limit" => {
+                limit = crate::parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = crate::parse_count(args.get(i + 1), "--offset")?;
+                i += 1;
+            }
             "-d" | "--dex" => {
                 // parse_common owns -d/--dex, but this loop runs first —
                 // forward both tokens so it can see them.
@@ -277,95 +303,168 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
+    if full && summary_explicit {
+        bail!(
+            "{}",
+            bi!(
+                "--full and --summary are mutually exclusive",
+                "--full 与 --summary 互斥"
+            )
+        );
+    }
+    if full && (depth.is_some() || sort_count) {
+        bail!(
+            "{}",
+            bi!(
+                "--depth and --sort only apply to the summary view (the default); drop --full",
+                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+            )
+        );
+    }
     let common = parse_common(&rest, "members")?;
     let name = common.rest.first().cloned();
+    let mut rows = crate::api::member_rows(
+        &common.input,
+        name.as_deref(),
+        class.as_deref(),
+        fuzzy_class,
+        kind_want,
+        &common.dex_filters,
+    )?;
+    if let Some(p) = &prefix {
+        rows.retain(|r| crate::api::under_prefix(&r.class, p, '.'));
+    }
+    let rf = crate::resolve_format(format);
+    let summary = !full;
 
+    if summary {
+        let keys: Vec<String> = rows.iter().map(|r| r.class.clone()).collect();
+        let mut tree = crate::api::prefix_tree(
+            keys.iter().map(|k| (k.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '.',
+        );
+        if sort_count {
+            tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
+        }
+        let rp = crate::api::window_rows(tree, offset, limit);
+        let rows_json: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "path": r.path,
+                    "kind": match r.kind {
+                        crate::api::TreeKind::Leaf => "class",
+                        crate::api::TreeKind::Group => "package",
+                    },
+                    "count": r.count,
+                })
+            })
+            .collect();
+        match rf {
+            crate::ResolvedFormat::Jsonl => {
+                for row in &rows_json {
+                    println!("{}", serde_json::to_string(row)?);
+                }
+                return Ok(());
+            }
+            crate::ResolvedFormat::Json => {
+                let v = serde_json::json!({
+                    "view": "tree",
+                    "prefix": prefix.unwrap_or_default(),
+                    "depth": depth,
+                    "total": rp.total,
+                    "offset": rp.offset,
+                    "limit": rp.limit,
+                    "returned": rp.rows.len(),
+                    "next_offset": rp.next_offset,
+                    "rows": rows_json,
+                });
+                return crate::print_report(rf, &v);
+            }
+            crate::ResolvedFormat::Table | crate::ResolvedFormat::Markdown => {
+                return crate::print_report(rf, &rows_json);
+            }
+            crate::ResolvedFormat::Text => {}
+        }
+        for r in &rp.rows {
+            match r.kind {
+                crate::api::TreeKind::Group => println!("{}/ ({})", r.path, r.count),
+                crate::api::TreeKind::Leaf if r.count > 1 => {
+                    println!("{} ({})", r.path, r.count)
+                }
+                crate::api::TreeKind::Leaf => println!("{}", r.path),
+            }
+        }
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
+        }
+        return Ok(());
+    }
+
+    // 平铺视图（旧行为）：窗口作用在行上。
+    let rp = crate::api::window_rows(rows, offset, limit);
+    if rf != crate::ResolvedFormat::Text {
+        if rf == crate::ResolvedFormat::Json && (limit != 0 || offset != 0) {
+            let v = serde_json::json!({
+                "total": rp.total,
+                "offset": rp.offset,
+                "limit": rp.limit,
+                "returned": rp.rows.len(),
+                "next_offset": rp.next_offset,
+                "data": rp.rows,
+            });
+            return crate::print_report(rf, &v);
+        }
+        return crate::print_report(rf, &rp.rows);
+    }
     println!(
         "{:10}  {:<6}  {}",
         "dex",
         bi!("kind", "类型"),
         bi!("class member", "类 成员")
     );
-    for_each_image(&common.input, &common.dex_filters, &mut |label, image| {
-        let dex_name = label
-            .rsplit_once('!')
-            .map(|(_, e)| e)
-            .unwrap_or(label)
-            .to_string();
-        let Ok(dex) = RawDex::parse(image) else {
-            return;
-        };
-        let class_ok = |cb: &[u8]| -> bool {
-            match &class {
-                None => true,
-                Some(c) => {
-                    let hay = String::from_utf8_lossy(cb);
-                    let hay = hay.trim_start_matches('L').trim_end_matches(';');
-                    let needle = c.replace('.', "/");
-                    if fuzzy_class {
-                        hay.contains(&needle)
-                    } else {
-                        hay == needle
-                    }
+    for r in &rp.rows {
+        println!(
+            "{:10}  {:<6}  {} {}",
+            r.dex,
+            r.kind,
+            r.class.replace('.', "/"),
+            r.member
+        );
+    }
+    if limit != 0 || offset != 0 {
+        eprintln!(
+            "{}",
+            bif!(
+                "ddc: showing {0} of {1} rows (offset {2}{3})",
+                "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                rp.rows.len(),
+                rp.total,
+                rp.offset,
+                match rp.next_offset {
+                    Some(n) => format!(", next_offset {n}"),
+                    None => String::new(),
                 }
-            }
-        };
-        if kind_want != Some("field") {
-            for mi in 0..dex.method_n as u32 {
-                let Some((cidx, proto, nb)) = dex.method_parts(mi) else {
-                    continue;
-                };
-                if let Some(n) = name.as_deref() {
-                    if !dex_match(nb, n.as_bytes()) {
-                        continue;
-                    }
-                }
-                if let Some(cb) = dex.type_bytes(cidx) {
-                    if !class_ok(cb) {
-                        continue;
-                    }
-                    println!(
-                        "{:10}  {:<6}  {} {}{}",
-                        dex_name,
-                        "method",
-                        dex.class_name(cidx),
-                        decode_mutf8_lossy(nb),
-                        dex.proto_desc(proto)
-                    );
-                }
-            }
-        }
-        if kind_want != Some("method") {
-            for fi in 0..dex.field_n as u32 {
-                let Some((cidx, nb, tb)) = dex.field_parts(fi) else {
-                    continue;
-                };
-                if let Some(n) = name.as_deref() {
-                    if !dex_match(nb, n.as_bytes()) {
-                        continue;
-                    }
-                }
-                if let Some(cb) = dex.type_bytes(cidx) {
-                    if !class_ok(cb) {
-                        continue;
-                    }
-                    println!(
-                        "{:10}  {:<6}  {} {} {}",
-                        dex_name,
-                        "field",
-                        dex.class_name(cidx),
-                        decode_mutf8_lossy(nb),
-                        decode_mutf8_lossy(tb)
-                    );
-                }
-            }
-        }
-    })
-}
-
-/// Case-sensitive substring match on raw MUTF-8 bytes (None needle = all).
-fn dex_match(nb: &[u8], needle: &[u8]) -> bool {
-    nb.len() >= needle.len() && nb.windows(needle.len()).any(|w| w == needle)
+            )
+        );
+    }
+    Ok(())
 }
 
 // ---- hierarchy ---------------------------------------------------------------
@@ -373,6 +472,13 @@ fn dex_match(nb: &[u8], needle: &[u8]) -> bool {
 pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut format = crate::OutFormat::Auto;
+    let mut prefix: Option<String> = None;
+    let mut full = false;
+    let mut summary_explicit = false;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -391,6 +497,62 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
                 format = crate::parse_format(&format_value(args, i)?)?;
                 i += 1;
             }
+            "--full" => full = true,
+            "--summary" | "--tree" => summary_explicit = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_class_prefix(v);
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
+            "--limit" => {
+                limit = crate::parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = crate::parse_count(args.get(i + 1), "--offset")?;
+                i += 1;
+            }
             a if a.starts_with('-') => bail!(
                 "{}",
                 bif!("hierarchy: unknown option {0}", "hierarchy：未知选项 {0}"; a)
@@ -399,114 +561,189 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
+    if full && summary_explicit {
+        bail!(
+            "{}",
+            bi!(
+                "--full and --summary are mutually exclusive",
+                "--full 与 --summary 互斥"
+            )
+        );
+    }
+    if full && (depth.is_some() || sort_count) {
+        bail!(
+            "{}",
+            bi!(
+                "--depth and --sort only apply to the summary view (the default); drop --full",
+                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+            )
+        );
+    }
     let common = parse_common(&rest, "hierarchy")?;
     let target = common
         .rest
         .first()
         .context(bi!("hierarchy needs a class name", "hierarchy 需要类名"))?
         .replace('.', "/");
+    let mut rows = crate::api::hierarchy_rows(&common.input, &target, &common.dex_filters)?;
+    if let Some(p) = &prefix {
+        rows.retain(|r| {
+            crate::api::under_prefix(&hierarchy_plain(&r.class).replace('/', "."), p, '.')
+        });
+    }
+    let rf = crate::resolve_format(format);
+    let summary = !full;
 
-    if format != crate::OutFormat::Text {
-        let rows = crate::api::hierarchy_rows(&common.input, &target, &common.dex_filters)?;
-        let rf = crate::resolve_format(format);
-        if rf != crate::ResolvedFormat::Text {
-            return crate::print_report(rf, &rows);
+    if summary {
+        // 每个 relation 一棵前缀树；行顺序 = relation 固定序 + 路径字典序。
+        const ORDER: [&str; 5] = ["class", "extends", "implements", "sub", "impl"];
+        let mut combined: Vec<(usize, String, crate::api::TreeRow)> = Vec::new();
+        for (ri, rel) in ORDER.iter().enumerate() {
+            let keys: Vec<String> = rows
+                .iter()
+                .filter(|r| r.relation == *rel)
+                .map(|r| hierarchy_plain(&r.class).replace('/', "."))
+                .collect();
+            if keys.is_empty() {
+                continue;
+            }
+            let tree = crate::api::prefix_tree(
+                keys.iter().map(|k| (k.as_str(), 1usize)),
+                prefix.as_deref(),
+                depth,
+                '.',
+            );
+            for row in tree {
+                combined.push((ri, rel.to_string(), row));
+            }
         }
+        if sort_count {
+            combined.sort_by(|a, b| {
+                b.2.count
+                    .cmp(&a.2.count)
+                    .then_with(|| a.2.path.cmp(&b.2.path))
+                    .then_with(|| a.0.cmp(&b.0))
+            });
+        } else {
+            combined.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.2.path.cmp(&b.2.path)));
+        }
+        let rp = crate::api::window_rows(combined, offset, limit);
+        let rows_json: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|(_, rel, r)| {
+                serde_json::json!({
+                    "relation": rel,
+                    "path": r.path,
+                    "kind": match r.kind {
+                        crate::api::TreeKind::Leaf => "class",
+                        crate::api::TreeKind::Group => "package",
+                    },
+                    "count": r.count,
+                })
+            })
+            .collect();
+        match rf {
+            crate::ResolvedFormat::Jsonl => {
+                for row in &rows_json {
+                    println!("{}", serde_json::to_string(row)?);
+                }
+                return Ok(());
+            }
+            crate::ResolvedFormat::Json => {
+                let v = serde_json::json!({
+                    "view": "tree",
+                    "prefix": prefix.unwrap_or_default(),
+                    "depth": depth,
+                    "total": rp.total,
+                    "offset": rp.offset,
+                    "limit": rp.limit,
+                    "returned": rp.rows.len(),
+                    "next_offset": rp.next_offset,
+                    "rows": rows_json,
+                });
+                return crate::print_report(rf, &v);
+            }
+            crate::ResolvedFormat::Table | crate::ResolvedFormat::Markdown => {
+                return crate::print_report(rf, &rows_json);
+            }
+            crate::ResolvedFormat::Text => {}
+        }
+        for (_, rel, row) in &rp.rows {
+            match row.kind {
+                crate::api::TreeKind::Group => println!("{:<12} {}/ ({})", rel, row.path, row.count),
+                crate::api::TreeKind::Leaf => println!("{:<12} {}", rel, row.path),
+            }
+        }
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
+        }
+        return Ok(());
     }
 
+    // 平铺视图（旧行为）：窗口作用在行上。
+    let rp = crate::api::window_rows(rows, offset, limit);
+    if rf != crate::ResolvedFormat::Text {
+        if rf == crate::ResolvedFormat::Json && (limit != 0 || offset != 0) {
+            let v = serde_json::json!({
+                "total": rp.total,
+                "offset": rp.offset,
+                "limit": rp.limit,
+                "returned": rp.rows.len(),
+                "next_offset": rp.next_offset,
+                "data": rp.rows,
+            });
+            return crate::print_report(rf, &v);
+        }
+        return crate::print_report(rf, &rp.rows);
+    }
     println!(
         "{:10}  {:<9}  {}",
         "dex",
         bi!("relation", "关系"),
         bi!("class", "类")
     );
-    // Map: super/interface type idx -> child classes (per image).
-    for_each_image(&common.input, &common.dex_filters, &mut |label, image| {
-        let dex_name = label
-            .rsplit_once('!')
-            .map(|(_, e)| e)
-            .unwrap_or(label)
-            .to_string();
-        let Ok(dex) = RawDex::parse(image) else {
-            return;
-        };
-        // Resolve the target's type idx in THIS image (name → idx).
-        let mut target_idx: Option<u32> = None;
-        for ti in 0..dex.type_n as u32 {
-            if let Some(b) = dex.type_bytes(ti) {
-                let n = decode_mutf8_lossy(b);
-                let plain = n.trim_start_matches('L').trim_end_matches(';');
-                if plain == target {
-                    target_idx = Some(ti);
-                    break;
+    for r in &rp.rows {
+        println!("{:10}  {:<9}  {}", r.dex, r.relation, r.class);
+    }
+    if limit != 0 || offset != 0 {
+        eprintln!(
+            "{}",
+            bif!(
+                "ddc: showing {0} of {1} rows (offset {2}{3})",
+                "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                rp.rows.len(),
+                rp.total,
+                rp.offset,
+                match rp.next_offset {
+                    Some(n) => format!(", next_offset {n}"),
+                    None => String::new(),
                 }
-            }
-        }
-        // Build the child map for whichever relation names we hit.
-        for ci in 0..dex.cls_n {
-            let Some((ty, sup, iface_off, _, _)) = dex.class_def_parts(ci) else {
-                continue;
-            };
-            let self_name = dex.class_name(ty);
-            if target_idx.is_some() && ty == target_idx.unwrap() {
-                // print self + lineage up
-                println!("{:10}  {:<9}  {}", dex_name, "class", self_name);
-                if sup != u32::MAX {
-                    if let Some(sb) = dex.type_bytes(sup) {
-                        println!(
-                            "{:10}  {:<9}  {}",
-                            dex_name,
-                            "extends",
-                            decode_mutf8_lossy(sb)
-                        );
-                    }
-                }
-                for it in dex.interface_types(iface_off) {
-                    if let Some(ib) = dex.type_bytes(it) {
-                        println!(
-                            "{:10}  {:<9}  {}",
-                            dex_name,
-                            "implements",
-                            decode_mutf8_lossy(ib)
-                        );
-                    }
-                }
-            }
-            if sup != u32::MAX && sup == target_idx.unwrap_or(u32::MAX) {
-                println!("{:10}  {:<9}  {}", dex_name, "sub", self_name);
-            }
-            for it in dex.interface_types(iface_off) {
-                if it == target_idx.unwrap_or(u32::MAX) {
-                    println!("{:10}  {:<9}  {}", dex_name, "impl", self_name);
-                }
-            }
-            // target not present as a type in this image: match by name
-            // (hierarchy across images where the parent lives elsewhere).
-            if target_idx.is_none() {
-                if sup != u32::MAX {
-                    if let Some(sb) = dex.type_bytes(sup) {
-                        if plain_of(&decode_mutf8_lossy(sb)) == target {
-                            println!("{:10}  {:<9}  {}", dex_name, "sub", self_name);
-                        }
-                    }
-                }
-                for it in dex.interface_types(iface_off) {
-                    if let Some(ib) = dex.type_bytes(it) {
-                        if plain_of(&decode_mutf8_lossy(ib)) == target {
-                            println!("{:10}  {:<9}  {}", dex_name, "impl", self_name);
-                        }
-                    }
-                }
-                if plain_of(&self_name) == target {
-                    println!("{:10}  {:<9}  {}", dex_name, "class", self_name);
-                }
-            }
-        }
-    })
+            )
+        );
+    }
+    Ok(())
 }
 
-fn plain_of(desc: &str) -> &str {
-    desc.trim_start_matches('L').trim_end_matches(';')
+/// extends/implements 行带 `L…;` 描述符；sub/impl/class 行是斜杠内部名。
+fn hierarchy_plain(class: &str) -> &str {
+    class
+        .strip_prefix('L')
+        .and_then(|s| s.strip_suffix(';'))
+        .unwrap_or(class)
 }
 
 // ---- largest ---------------------------------------------------------------
@@ -917,16 +1154,30 @@ pub(crate) fn fmt_operands(
 
 pub(crate) fn cmd_callers(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
+    let mut extra: Vec<String> = Vec::new();
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "-d" | "--dex" => {
-                // parse_common owns -d/--dex, but this loop runs first —
-                // forward both tokens so it can see them.
-                rest.push(args[i].clone());
-                rest.push(
+                extra.push(args[i].clone());
+                extra.push(
                     args.get(i + 1)
                         .context(bi!("--dex needs a value", "--dex 需要一个值"))?
+                        .clone(),
+                );
+                i += 1;
+            }
+            // 透传给 findrefs 的视图/翻页开关。
+            "--full" | "--summary" | "--tree" | "--fuzzy-class" => {
+                extra.push(args[i].clone())
+            }
+            "--limit" | "--offset" | "--sort" | "--depth" | "--prefix" | "--format" => {
+                extra.push(args[i].clone());
+                extra.push(
+                    args.get(i + 1)
+                        .with_context(|| {
+                            bif!("{0} needs a value", "{0} 需要一个值"; args[i])
+                        })?
                         .clone(),
                 );
                 i += 1;
@@ -951,6 +1202,7 @@ pub(crate) fn cmd_callers(args: &[String]) -> Result<()> {
         None => (target.clone(), None),
     };
     let mut fwd: Vec<String> = vec![common.input.display().to_string(), "method".into()];
+    fwd.extend(extra);
     if let Some(c) = class {
         fwd.push("--class".into());
         fwd.push(c);
@@ -1598,6 +1850,13 @@ fn dump_entry(input: &std::path::Path, name: &str, container: &str) -> Result<Ve
 pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut out: Option<PathBuf> = None;
+    let mut prefix: Option<String> = None;
+    let mut full = false;
+    let mut summary_explicit = false;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1608,6 +1867,62 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
                 ));
                 i += 1;
             }
+            "--full" => full = true,
+            "--summary" | "--tree" => summary_explicit = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_prefix(v, '/');
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
+            "--limit" => {
+                limit = crate::parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = crate::parse_count(args.get(i + 1), "--offset")?;
+                i += 1;
+            }
             a if a.starts_with('-') => bail!(
                 "{}",
                 bif!("res: unknown option {0}", "res：未知选项 {0}"; a)
@@ -1616,25 +1931,145 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
+    if full && summary_explicit {
+        bail!(
+            "{}",
+            bi!(
+                "--full and --summary are mutually exclusive",
+                "--full 与 --summary 互斥"
+            )
+        );
+    }
+    if full && (depth.is_some() || sort_count) {
+        bail!(
+            "{}",
+            bi!(
+                "--depth and --sort only apply to the summary view (the default); drop --full",
+                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+            )
+        );
+    }
     let common = parse_common(&rest, "res")?;
     let entries = flatten_entries(&common.input)?;
     let Some(want) = common.rest.first() else {
-        // List mode: every entry, method + compressed size.
-        println!(
-            "{:<8}  {:>9}  {}",
-            bi!("method", "压缩方式"),
-            bi!("size", "大小"),
-            bi!("entry", "条目")
-        );
-        for e in &entries {
-            println!("{:<8}  {:>9}  {}", e.method, e.size, e.name);
+        // 列表模式：默认目录摘要；--full 为旧的逐条表格（可翻页）。
+        if full {
+            let rp = crate::api::window_rows(entries, offset, limit);
+            println!(
+                "{:<8}  {:>9}  {}",
+                bi!("method", "压缩方式"),
+                bi!("size", "大小"),
+                bi!("entry", "条目")
+            );
+            for e in &rp.rows {
+                println!("{:<8}  {:>9}  {}", e.method, e.size, e.name);
+            }
+            if limit != 0 || offset != 0 {
+                eprintln!(
+                    "{}",
+                    bif!(
+                        "ddc: showing {0} of {1} entries (offset {2}{3})",
+                        "ddc：显示 {0}/{1} 个条目（偏移 {2}{3}）";
+                        rp.rows.len(),
+                        rp.total,
+                        rp.offset,
+                        match rp.next_offset {
+                            Some(n) => format!(", next_offset {n}"),
+                            None => String::new(),
+                        }
+                    )
+                );
+            } else {
+                println!(
+                    "{}",
+                    bif!("total: {0} entries", "合计：{0} 个条目"; rp.total)
+                );
+            }
+            return Ok(());
         }
-        println!(
-            "{}",
-            bif!("total: {0} entries", "合计：{0} 个条目"; entries.len())
+        let keys: Vec<String> = entries
+            .iter()
+            .filter(|e| {
+                prefix
+                    .as_deref()
+                    .is_none_or(|p| crate::api::under_prefix(&e.name, p, '/'))
+            })
+            .map(|e| e.name.clone())
+            .collect();
+        let mut tree = crate::api::prefix_tree(
+            keys.iter().map(|k| (k.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '/',
         );
+        if sort_count {
+            tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
+        }
+        let rp = crate::api::window_rows(tree, offset, limit);
+        let mut text = String::new();
+        for r in &rp.rows {
+            match r.kind {
+                crate::api::TreeKind::Group => {
+                    text.push_str(&format!("{}/ ({})\n", r.path, r.count))
+                }
+                crate::api::TreeKind::Leaf if r.count > 1 => {
+                    text.push_str(&format!("{} ({})\n", r.path, r.count))
+                }
+                crate::api::TreeKind::Leaf => text.push_str(&format!("{}\n", r.path)),
+            }
+        }
+        match out {
+            Some(f) => {
+                if let Some(parent) = f.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(&f, text)?;
+                eprintln!(
+                    "{}",
+                    bif!(
+                        "ddc: wrote {0} row(s) to {1}",
+                        "ddc：已写出 {0} 行到 {1}";
+                        rp.rows.len(),
+                        f.display()
+                    )
+                );
+            }
+            None => print!("{text}"),
+        }
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
+        }
         return Ok(());
     };
+    if full
+        || summary_explicit
+        || prefix.is_some()
+        || depth.is_some()
+        || sort_count
+        || limit != 0
+        || offset != 0
+    {
+        bail!(
+            "{}",
+            bi!(
+                "res: --full/--summary/--prefix/--depth/--sort/--limit/--offset apply to the list form only",
+                "res：--full/--summary/--prefix/--depth/--sort/--limit/--offset 仅适用于列表形式"
+            )
+        );
+    }
 
     // Dump mode: exact match first, then a unique substring match.
     let hit = entries

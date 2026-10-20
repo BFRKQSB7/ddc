@@ -126,7 +126,7 @@ fn getclass_unknown_class_errors() {
 #[test]
 fn findrefs_all_four_kinds() {
     // string — column format: header row + one row per method.
-    let o = run(ddc().arg("findrefs").arg(fixture()).arg("string").arg("hi"));
+    let o = run(ddc().arg("findrefs").arg(fixture()).arg("string").arg("hi").arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
@@ -142,7 +142,8 @@ fn findrefs_all_four_kinds() {
         .arg("findrefs")
         .arg(fixture())
         .arg("method")
-        .arg("greet"));
+        .arg("greet")
+        .arg("--full"));
     assert!(o.status.success());
     let out = stdout(&o);
     assert!(out.contains("invoke        Hello main("), "{}", out);
@@ -157,7 +158,8 @@ fn findrefs_all_four_kinds() {
         .arg("findrefs")
         .arg(fixture())
         .arg("field")
-        .arg("counter"));
+        .arg("counter")
+        .arg("--full"));
     assert!(o.status.success());
     let out = stdout(&o);
     assert!(out.contains("LHello;->counter:I"), "{}", out);
@@ -167,7 +169,8 @@ fn findrefs_all_four_kinds() {
         .arg("findrefs")
         .arg(fixture())
         .arg("type")
-        .arg("Greeter"));
+        .arg("Greeter")
+        .arg("--full"));
     assert!(o.status.success());
     let out = stdout(&o);
     assert!(out.contains("LGreeter;"), "{}", out);
@@ -182,7 +185,8 @@ fn findrefs_with_class_filter() {
         .arg("method")
         .arg("greet")
         .arg("--class")
-        .arg("Greeter"));
+        .arg("Greeter")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains("LGreeter;->greet()"));
 
@@ -194,7 +198,8 @@ fn findrefs_with_class_filter() {
         .arg("method")
         .arg("greet")
         .arg("--class")
-        .arg("Nope"));
+        .arg("Nope")
+        .arg("--full"));
     assert!(o.status.success());
     // No hits: header only (the table is the payload, not noise).
     assert!(
@@ -211,7 +216,8 @@ fn findrefs_with_class_filter() {
         .arg("--dex")
         .arg("hello")
         .arg("string")
-        .arg("hi"));
+        .arg("hi")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(stdout(&o).contains("\"hi \""));
 
@@ -222,7 +228,8 @@ fn findrefs_with_class_filter() {
         .arg("--dex")
         .arg("classes9")
         .arg("string")
-        .arg("hi"));
+        .arg("hi")
+        .arg("--full"));
     assert_eq!(o.status.code(), Some(2));
     assert!(stderr(&o).contains("no matching dex images"));
     assert!(
@@ -311,7 +318,8 @@ fn members_scoped_to_class() {
         .arg("members")
         .arg(fixture())
         .arg("--class")
-        .arg("Greeter"));
+        .arg("Greeter")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
@@ -334,7 +342,7 @@ fn members_scoped_to_class() {
 
 #[test]
 fn hierarchy_lineage_and_subs() {
-    let o = run(ddc().arg("hierarchy").arg(fixture()).arg("Greeter"));
+    let o = run(ddc().arg("hierarchy").arg(fixture()).arg("Greeter").arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(out.contains("class      Greeter"), "self:\n{}", out);
@@ -347,7 +355,8 @@ fn hierarchy_lineage_and_subs() {
     let o = run(ddc()
         .arg("hierarchy")
         .arg(fixture())
-        .arg("java.lang.Object"));
+        .arg("java.lang.Object")
+        .arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(out.contains("sub        Greeter"), "sub:\n{}", out);
@@ -424,7 +433,7 @@ fn disasm_whole_class_and_single_method() {
 
 #[test]
 fn callers_finds_invokers() {
-    let o = run(ddc().arg("callers").arg(fixture()).arg("println"));
+    let o = run(ddc().arg("callers").arg(fixture()).arg("println").arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     assert!(
@@ -638,7 +647,7 @@ fn mainactivity_reports_entry_point() {
 #[test]
 fn res_lists_and_dumps_entries() {
     let apk = apk_fixture("res");
-    let o = run(ddc().arg("res").arg(&apk));
+    let o = run(ddc().arg("res").arg(&apk).arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));
     let out = stdout(&o);
     let header: Vec<&str> = out.lines().next().unwrap().split_whitespace().collect();

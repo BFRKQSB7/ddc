@@ -169,8 +169,10 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   启动 Activity；相对名规则（`.MainActivity` → 包名前缀；裸单词 →
   包名.单词）与 activity-alias 的 `targetActivity` 都会解析；随后在 dex
   镜像里验证（报告定义它的镜像）。
-- **`ddc res <apk> [条目] [-o FILE]`** —— 无条目：列出全部归档条目
-  （压缩方式、压缩大小；XAPK 内层 APK 摊平成 `apk!name` 标签）。带条目：
+- **`ddc res <apk> [条目] [-o FILE]`** —— 无条目：输出归档目录摘要
+  （按前缀统计条目数，如 `res/drawable/ (1234)`）；`--full` 为平铺表格
+  （压缩方式、压缩大小；XAPK 内层 APK 摊平成 `apk!name` 标签），
+  `--prefix` 展开目录，另有 `--depth/--sort/--limit/--offset`。带条目：
   输出内容 —— 二进制 XML（首块 `0x0003`）走 AXML 解码器，文本直出，
   二进制经 `-o` 保存（否则错误会提示你）。条目匹配：先精确名，再唯一
   子串。
@@ -179,26 +181,34 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
 
 - **`ddc strings <输入> [-f 文本] [--with-locations]`** —— 字符串表（每串
   一行）。`-f` 子串过滤；`--with-locations` 遍历每个方法的 const-string
-  指令，加一列 `used-by` 把命中映射到所属方法。
+  指令，加一列 `used-by` 把命中映射到所属方法。`--limit`/`--offset`
+  翻页（JSON 附带 `total`/`next_offset`）；MCP 工具默认封顶 500 行并
+  在末尾附截断提示。
 - **`ddc findrefs <输入> <string|type|class|method|field> <查询> [--class
   FQCN] [--fuzzy-class] [-o 文件]`** —— 字符串字面量 / 类型 / 方法调用点 /
   字段访问的全部引用（`class` 是 `type` 的常用词别名；继承/实现等定义级
-  关系请用 `ddc hierarchy`）。输出列式带表头（`dex kind class method
-  refs`），**一个方法一行**：同类多次命中聚合进 refs（`; ` 分隔、去重）；
-  kind 为首次命中的指令。匹配语义：查询是大小写不敏感子串；`--class`
-  默认精确（点分、斜杠、`L…;` 描述符形式都归一化），`--fuzzy-class` 变
-  子串。
+  关系请用 `ddc hierarchy`）。默认视图是**引用方类**的前缀目录（按包
+  统计命中数——"谁在用这个字符串"一眼可见），用 `--prefix`/`--depth`
+  钻取；`--full` 输出逐条命中行：列式带表头（`dex kind class method
+  refs`），**一个方法一行**，多次命中聚合进 refs（`; ` 分隔、去重）。
+  `--sort`/`--limit`/`--offset` 两种视图通用。匹配语义：查询是大小写
+  不敏感子串；`--class` 默认精确（点分、斜杠、`L…;` 描述符形式都归一
+  化），`--fuzzy-class` 变子串。
 - **`ddc callers <输入> 名字 [FQCN]`** —— 谁调用了这个方法（复用
-  findrefs 的方法扫描，可选限定到一个类）。
+  findrefs 的方法扫描，可选限定到一个类；同样接受
+  `--full/--prefix/--depth/--sort/--limit/--offset`）。
 - **`ddc members <输入> [名字] [--class FQCN] [--fuzzy-class]
   [--method|--field]`** —— 方法/字段名检索；`--method` / `--field` 限定
-  种类。
+  种类。默认视图按所属类/包分组计数；`--full` 输出逐条成员行；
+  支持 `--format json`。
 
 ### 看清结构
 
 - **`ddc hierarchy <输入> FQCN`** —— 类的继承谱：正向 `class` /
   `extends` / `implements`，反向对每个继承/实现它的类输出 `sub` / `impl`。
-  跨镜像有效（父类在别的 dex 时按名字匹配）。
+  跨镜像有效（父类在别的 dex 时按名字匹配）。默认视图按 relation 分组
+  的前缀目录（`sub com.example/ (123)`），15 万子类也一屏可见；`--full`
+  输出逐条关系行，`--prefix/--depth/--sort/--limit/--offset` 调整视图。
 - **`ddc largest <输入> [-n N]`** —— 按指令数排序的 top-N 方法（找巨兽；
   默认 20）。
 - **`ddc disasm <输入> FQCN[.方法]`** —— 一个类或一个方法的原始字节码：
