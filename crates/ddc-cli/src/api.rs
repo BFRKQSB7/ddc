@@ -596,13 +596,20 @@ pub fn main_activity(input: &Path) -> Result<MainActivityReport> {
 
 /// String-table rows; `filter` is a substring filter, `with_locations`
 /// maps each string to its referencing methods.
-pub fn string_rows(
+/// Windowed string-table scan: emits `[offset, offset+limit)` and returns
+/// the total match count. Only the window's rows are decoded/quoted, and
+/// `--with-locations` collects users only for window strings and only for
+/// images that intersect the window.
+pub fn string_scan_window(
     input: &Path,
     filter: Option<&str>,
     with_locations: bool,
     dex_filters: &[String],
-) -> Result<Vec<StringRow>> {
-    let mut rows: Vec<StringRow> = Vec::new();
+    offset: usize,
+    limit: usize,
+    mut emit: impl FnMut(StringRow),
+) -> Result<usize> {
+    let mut base = 0usize;
     for_each_image(&input.to_path_buf(), dex_filters, &mut |label, image| {
         let dex_name = label
             .rsplit_once('!')
@@ -625,9 +632,24 @@ pub fn string_rows(
             })
             .map(|idx| (idx, ()))
             .collect();
+        let count = matched.len();
+        // 本映像内与全局窗口的交集。
+        let local_lo = offset.saturating_sub(base);
+        let local_hi = if limit == 0 {
+            usize::MAX
+        } else {
+            offset.saturating_add(limit).saturating_sub(base)
+        };
+        let in_window = local_lo < count && local_lo < local_hi;
         let mut users: std::collections::HashMap<u32, Vec<String>> =
             std::collections::HashMap::default();
-        if with_locations {
+        if with_locations && in_window {
+            let wanted: std::collections::HashSet<u32> = matched
+                .keys()
+                .skip(local_lo)
+                .take(local_hi.saturating_sub(local_lo))
+                .copied()
+                .collect();
             for ci in 0..dex.cls_n {
                 let Some((ty, _, _, cdo, _)) = dex.class_def_parts(ci) else {
                     continue;
@@ -651,12 +673,8 @@ pub fn string_rows(
                     if start >= end {
                         continue;
                     }
-                    let owner = dex
-                        .method_parts(midx)
-                        .map(|(_, p, nb)| {
-                            format!("{} {}{}", class, decode_mutf8_lossy(nb), dex.proto_desc(p))
-                        })
-                        .unwrap_or_default();
+                    // owner 惰性构造：大多数方法不引用窗口字符串。
+                    let mut owner: Option<String> = None;
                     ddc_dex::insn::scan_instructions(&dex.d[start..end], &mut |op, _pc, bytes| {
                         if op != 0x1a && op != 0x1b {
                             return;
@@ -674,31 +692,48 @@ pub fn string_rows(
                         } else {
                             return;
                         };
-                        if matched.contains_key(&idx) {
-                            users.entry(idx).or_default().push(owner.clone());
+                        if !wanted.contains(&idx) {
+                            return;
                         }
+                        let o = owner.get_or_insert_with(|| {
+                            dex.method_parts(midx)
+                                .map(|(_, p, nb)| {
+                                    format!(
+                                        "{} {}{}",
+                                        class,
+                                        decode_mutf8_lossy(nb),
+                                        dex.proto_desc(p)
+                                    )
+                                })
+                                .unwrap_or_default()
+                        });
+                        users.entry(idx).or_default().push(o.clone());
                     });
                 }
             }
         }
-        for &idx in matched.keys() {
-            let s = decode_mutf8_lossy(dex.string_bytes(idx).unwrap_or(&[]));
-            let used_by = match users.get(&idx) {
-                Some(u) if !u.is_empty() => {
-                    let mut uniq: Vec<&str> = u.iter().map(|m| m.as_str()).collect();
-                    uniq.dedup();
-                    uniq.iter().map(|m| m.to_string()).collect()
-                }
-                _ => Vec::new(),
-            };
-            rows.push(StringRow {
-                dex: dex_name.clone(),
-                string: format!("{s:?}"),
-                used_by,
-            });
+        if in_window {
+            let take = local_hi.saturating_sub(local_lo);
+            for &idx in matched.keys().skip(local_lo).take(take) {
+                let s = decode_mutf8_lossy(dex.string_bytes(idx).unwrap_or(&[]));
+                let used_by = match users.get(&idx) {
+                    Some(u) if !u.is_empty() => {
+                        let mut uniq: Vec<&str> = u.iter().map(|m| m.as_str()).collect();
+                        uniq.dedup();
+                        uniq.iter().map(|m| m.to_string()).collect()
+                    }
+                    _ => Vec::new(),
+                };
+                emit(StringRow {
+                    dex: dex_name.clone(),
+                    string: format!("{s:?}"),
+                    used_by,
+                });
+            }
         }
+        base += count;
     })?;
-    Ok(rows)
+    Ok(base)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -715,15 +750,52 @@ pub struct MemberRow {
 
 /// Members (`--method`/`--field` filter, optional NAME substring and
 /// `--class` scope). Same scan as the CLI text path, dotted owner names.
-pub fn member_rows(
-    input: &Path,
-    name: Option<&str>,
-    class: Option<&str>,
+/// Shared member filters (name substring, owner-class scope, kind).
+struct MemberFilter<'a> {
+    name: Option<&'a str>,
+    class: Option<&'a str>,
     fuzzy_class: bool,
-    kind_want: Option<&str>,
+    kind_want: Option<&'a str>,
+}
+
+impl MemberFilter<'_> {
+    fn name_ok(&self, nb: &[u8]) -> bool {
+        match self.name {
+            Some(n) => dex_match(nb, n.as_bytes()),
+            None => true,
+        }
+    }
+
+    fn class_ok(&self, cb: &[u8]) -> bool {
+        match self.class {
+            None => true,
+            Some(c) => {
+                let hay = String::from_utf8_lossy(cb);
+                let hay = hay.trim_start_matches('L').trim_end_matches(';');
+                let needle = c.replace('.', "/");
+                if self.fuzzy_class {
+                    hay.contains(&needle)
+                } else {
+                    hay == needle
+                }
+            }
+        }
+    }
+}
+
+/// Visit matching members in scan order. `wanted(global_index)` decides
+/// whether the (potentially expensive) row text is formatted for that
+/// match — windowed queries format only their page. Returns the total
+/// number of matches (so callers can report `total` without retaining
+/// every row).
+fn member_scan(
+    input: &Path,
+    filter: &MemberFilter<'_>,
     dex_filters: &[String],
-) -> Result<Vec<MemberRow>> {
-    let mut rows: Vec<MemberRow> = Vec::new();
+    mut wanted: impl FnMut(usize) -> bool,
+    mut emit: impl FnMut(MemberRow),
+) -> Result<usize> {
+    let mut index = 0usize;
     for_each_image(&input.to_path_buf(), dex_filters, &mut |label, image| {
         let dex_name = label
             .rsplit_once('!')
@@ -733,77 +805,158 @@ pub fn member_rows(
         let Ok(dex) = RawDex::parse(image) else {
             return;
         };
-        let class_ok = |cb: &[u8]| -> bool {
-            match class {
-                None => true,
-                Some(c) => {
-                    let hay = String::from_utf8_lossy(cb);
-                    let hay = hay.trim_start_matches('L').trim_end_matches(';');
-                    let needle = c.replace('.', "/");
-                    if fuzzy_class {
-                        hay.contains(&needle)
-                    } else {
-                        hay == needle
-                    }
-                }
-            }
-        };
-        if kind_want != Some("field") {
+        if filter.kind_want != Some("field") {
             for mi in 0..dex.method_n as u32 {
                 let Some((cidx, proto, nb)) = dex.method_parts(mi) else {
                     continue;
                 };
-                if let Some(n) = name {
-                    if !dex_match(nb, n.as_bytes()) {
-                        continue;
-                    }
+                if !filter.name_ok(nb) {
+                    continue;
                 }
-                if let Some(cb) = dex.type_bytes(cidx) {
-                    if !class_ok(cb) {
-                        continue;
-                    }
-                    rows.push(MemberRow {
+                let Some(cb) = dex.type_bytes(cidx) else {
+                    continue;
+                };
+                if !filter.class_ok(cb) {
+                    continue;
+                }
+                if wanted(index) {
+                    emit(MemberRow {
                         dex: dex_name.clone(),
                         kind: "method".to_string(),
                         class: dex.class_name(cidx).replace('/', "."),
-                        member: format!(
-                            "{}{}",
-                            decode_mutf8_lossy(nb),
-                            dex.proto_desc(proto)
-                        ),
+                        member: format!("{}{}", decode_mutf8_lossy(nb), dex.proto_desc(proto)),
                     });
                 }
+                index += 1;
             }
         }
-        if kind_want != Some("method") {
+        if filter.kind_want != Some("method") {
             for fi in 0..dex.field_n as u32 {
                 let Some((cidx, nb, tb)) = dex.field_parts(fi) else {
                     continue;
                 };
-                if let Some(n) = name {
-                    if !dex_match(nb, n.as_bytes()) {
-                        continue;
-                    }
+                if !filter.name_ok(nb) {
+                    continue;
                 }
-                if let Some(cb) = dex.type_bytes(cidx) {
-                    if !class_ok(cb) {
-                        continue;
-                    }
-                    rows.push(MemberRow {
+                let Some(cb) = dex.type_bytes(cidx) else {
+                    continue;
+                };
+                if !filter.class_ok(cb) {
+                    continue;
+                }
+                if wanted(index) {
+                    emit(MemberRow {
                         dex: dex_name.clone(),
                         kind: "field".to_string(),
                         class: dex.class_name(cidx).replace('/', "."),
-                        member: format!(
-                            "{} {}",
-                            decode_mutf8_lossy(nb),
-                            decode_mutf8_lossy(tb)
-                        ),
+                        member: format!("{} {}", decode_mutf8_lossy(nb), decode_mutf8_lossy(tb)),
                     });
+                }
+                index += 1;
+            }
+        }
+    })?;
+    Ok(index)
+}
+
+/// Windowed member rows: emits `[offset, offset+limit)` (limit 0 =
+/// unlimited) and returns the total match count. Only the window's rows
+/// are formatted, so a `--limit 20` scan stays close to scan cost.
+#[allow(clippy::too_many_arguments)]
+pub fn member_scan_window(
+    input: &Path,
+    name: Option<&str>,
+    class: Option<&str>,
+    fuzzy_class: bool,
+    kind_want: Option<&str>,
+    dex_filters: &[String],
+    offset: usize,
+    limit: usize,
+    emit: impl FnMut(MemberRow),
+) -> Result<usize> {
+    let filter = MemberFilter {
+        name,
+        class,
+        fuzzy_class,
+        kind_want,
+    };
+    member_scan(input, &filter, dex_filters, |idx| {
+        idx >= offset && (limit == 0 || idx < offset + limit)
+    }, emit)
+}
+
+/// Owner-class counts for the member summary. Counts by type index per
+/// image (no per-row allocation), then resolves one name per class with
+/// hits — a 2.5M-member scan never formats a member string.
+pub fn member_class_counts(
+    input: &Path,
+    name: Option<&str>,
+    class: Option<&str>,
+    fuzzy_class: bool,
+    kind_want: Option<&str>,
+    dex_filters: &[String],
+) -> Result<Vec<(String, usize)>> {
+    let filter = MemberFilter {
+        name,
+        class,
+        fuzzy_class,
+        kind_want,
+    };
+    let mut by_name: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for_each_image(&input.to_path_buf(), dex_filters, &mut |_label, image| {
+        let Ok(dex) = RawDex::parse(image) else {
+            return;
+        };
+        let mut counts = vec![0usize; dex.type_n];
+        let mut any = false;
+        if filter.kind_want != Some("field") {
+            for mi in 0..dex.method_n as u32 {
+                let Some((cidx, _proto, nb)) = dex.method_parts(mi) else {
+                    continue;
+                };
+                if !filter.name_ok(nb) {
+                    continue;
+                }
+                let Some(cb) = dex.type_bytes(cidx) else {
+                    continue;
+                };
+                if !filter.class_ok(cb) {
+                    continue;
+                }
+                counts[cidx as usize] += 1;
+                any = true;
+            }
+        }
+        if filter.kind_want != Some("method") {
+            for fi in 0..dex.field_n as u32 {
+                let Some((cidx, nb, _tb)) = dex.field_parts(fi) else {
+                    continue;
+                };
+                if !filter.name_ok(nb) {
+                    continue;
+                }
+                let Some(cb) = dex.type_bytes(cidx) else {
+                    continue;
+                };
+                if !filter.class_ok(cb) {
+                    continue;
+                }
+                counts[cidx as usize] += 1;
+                any = true;
+            }
+        }
+        if any {
+            for (idx, &c) in counts.iter().enumerate() {
+                if c > 0 {
+                    let name = dex.class_name(idx as u32).replace('/', ".");
+                    if !name.is_empty() {
+                        *by_name.entry(name).or_default() += c;
+                    }
                 }
             }
         }
     })?;
-    Ok(rows)
+    Ok(by_name.into_iter().collect())
 }
 
 /// Case-sensitive substring match on raw MUTF-8 bytes.

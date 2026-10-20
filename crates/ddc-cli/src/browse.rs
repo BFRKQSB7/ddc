@@ -138,62 +138,82 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
         i += 1;
     }
     let common = parse_common(&rest, "strings")?;
-    let rows =
-        crate::api::string_rows(&common.input, filter.as_deref(), with_loc, &common.dex_filters)?;
-    let rp = crate::api::window_rows(rows, offset, limit);
     let rf = crate::resolve_format(format);
 
-    if rf == crate::ResolvedFormat::Jsonl {
-        return crate::print_report(rf, &rp.rows);
-    }
-    if rf != crate::ResolvedFormat::Text {
+    if rf == crate::ResolvedFormat::Text {
+        println!(
+            "{:10}  {}",
+            "dex",
+            if with_loc {
+                bi!("string  used-by", "字符串    使用者")
+            } else {
+                bi!("string", "字符串")
+            }
+        );
+        let shown = std::cell::Cell::new(0usize);
+        let total = crate::api::string_scan_window(
+            &common.input,
+            filter.as_deref(),
+            with_loc,
+            &common.dex_filters,
+            offset,
+            limit,
+            |r| {
+                if r.used_by.is_empty() {
+                    println!("{:10}  {}", r.dex, r.string);
+                } else {
+                    println!("{:10}  {}  {}", r.dex, r.string, r.used_by.join("; "));
+                }
+                shown.set(shown.get() + 1);
+            },
+        )?;
         if limit != 0 || offset != 0 {
-            let v = serde_json::json!({
-                "total": rp.total,
-                "offset": rp.offset,
-                "limit": rp.limit,
-                "returned": rp.rows.len(),
-                "next_offset": rp.next_offset,
-                "data": rp.rows,
-            });
-            return crate::print_report(rf, &v);
+            let end = offset.saturating_add(shown.get());
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} strings (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 个字符串（偏移 {2}{3}）";
+                    shown.get(),
+                    total,
+                    offset,
+                    if end < total { format!(", next_offset {end}") } else { String::new() }
+                )
+            );
         }
-        return crate::print_report(rf, &rp.rows);
+        return Ok(());
     }
 
-    println!(
-        "{:10}  {}",
-        "dex",
-        if with_loc {
-            bi!("string  used-by", "字符串    使用者")
-        } else {
-            bi!("string", "字符串")
+    let mut rows = Vec::new();
+    let total = crate::api::string_scan_window(
+        &common.input,
+        filter.as_deref(),
+        with_loc,
+        &common.dex_filters,
+        offset,
+        limit,
+        |r| rows.push(r),
+    )?;
+    if rf == crate::ResolvedFormat::Jsonl {
+        for r in &rows {
+            println!("{}", serde_json::to_string(r)?);
         }
-    );
-    for r in &rp.rows {
-        if r.used_by.is_empty() {
-            println!("{:10}  {}", r.dex, r.string);
-        } else {
-            println!("{:10}  {}  {}", r.dex, r.string, r.used_by.join("; "));
-        }
+        return Ok(());
     }
-    if limit != 0 || offset != 0 {
-        eprintln!(
-            "{}",
-            bif!(
-                "ddc: showing {0} of {1} strings (offset {2}{3})",
-                "ddc：显示 {0}/{1} 个字符串（偏移 {2}{3}）";
-                rp.rows.len(),
-                rp.total,
-                rp.offset,
-                match rp.next_offset {
-                    Some(n) => format!(", next_offset {n}"),
-                    None => String::new(),
-                }
-            )
-        );
+    if rf == crate::ResolvedFormat::Json && (limit != 0 || offset != 0) {
+        let end = offset.saturating_add(rows.len());
+        let next = if end < total { Some(end) } else { None };
+        let v = serde_json::json!({
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "returned": rows.len(),
+            "next_offset": next,
+            "data": rows,
+        });
+        return crate::print_report(rf, &v);
     }
-    Ok(())
+    crate::print_report(rf, &rows)
 }
 
 // ---- members ---------------------------------------------------------------
@@ -323,24 +343,25 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
     }
     let common = parse_common(&rest, "members")?;
     let name = common.rest.first().cloned();
-    let mut rows = crate::api::member_rows(
-        &common.input,
-        name.as_deref(),
-        class.as_deref(),
-        fuzzy_class,
-        kind_want,
-        &common.dex_filters,
-    )?;
-    if let Some(p) = &prefix {
-        rows.retain(|r| crate::api::under_prefix(&r.class, p, '.'));
-    }
     let rf = crate::resolve_format(format);
     let summary = !full;
 
     if summary {
-        let keys: Vec<String> = rows.iter().map(|r| r.class.clone()).collect();
+        // 摘要只按 owner 类计数：不格式化任何成员字符串（2.5M 行扫描
+        // 的耗时/内存与空过滤扫描同级）。
+        let mut counts = crate::api::member_class_counts(
+            &common.input,
+            name.as_deref(),
+            class.as_deref(),
+            fuzzy_class,
+            kind_want,
+            &common.dex_filters,
+        )?;
+        if let Some(p) = &prefix {
+            counts.retain(|(k, _)| crate::api::under_prefix(k, p, '.'));
+        }
         let mut tree = crate::api::prefix_tree(
-            keys.iter().map(|k| (k.as_str(), 1usize)),
+            counts.iter().map(|(k, w)| (k.as_str(), *w)),
             prefix.as_deref(),
             depth,
             '.',
@@ -417,54 +438,77 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
         return Ok(());
     }
 
-    // 平铺视图（旧行为）：窗口作用在行上。
-    let rp = crate::api::window_rows(rows, offset, limit);
-    if rf != crate::ResolvedFormat::Text {
-        if rf == crate::ResolvedFormat::Json && (limit != 0 || offset != 0) {
-            let v = serde_json::json!({
-                "total": rp.total,
-                "offset": rp.offset,
-                "limit": rp.limit,
-                "returned": rp.rows.len(),
-                "next_offset": rp.next_offset,
-                "data": rp.rows,
-            });
-            return crate::print_report(rf, &v);
-        }
-        return crate::print_report(rf, &rp.rows);
-    }
-    println!(
-        "{:10}  {:<6}  {}",
-        "dex",
-        bi!("kind", "类型"),
-        bi!("class member", "类 成员")
-    );
-    for r in &rp.rows {
+    // 平铺视图（旧行为）：只格式化窗口内的行，total 由扫描计数得出。
+    if rf == crate::ResolvedFormat::Text {
         println!(
-            "{:10}  {:<6}  {} {}",
-            r.dex,
-            r.kind,
-            r.class.replace('.', "/"),
-            r.member
+            "{:10}  {:<6}  {}",
+            "dex",
+            bi!("kind", "类型"),
+            bi!("class member", "类 成员")
         );
+        let shown = std::cell::Cell::new(0usize);
+        let total = crate::api::member_scan_window(
+            &common.input,
+            name.as_deref(),
+            class.as_deref(),
+            fuzzy_class,
+            kind_want,
+            &common.dex_filters,
+            offset,
+            limit,
+            |r| {
+                println!(
+                    "{:10}  {:<6}  {} {}",
+                    r.dex,
+                    r.kind,
+                    r.class.replace('.', "/"),
+                    r.member
+                );
+                shown.set(shown.get() + 1);
+            },
+        )?;
+        if limit != 0 || offset != 0 {
+            let end = offset.saturating_add(shown.get());
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    shown.get(),
+                    total,
+                    offset,
+                    if end < total { format!(", next_offset {end}") } else { String::new() }
+                )
+            );
+        }
+        return Ok(());
     }
-    if limit != 0 || offset != 0 {
-        eprintln!(
-            "{}",
-            bif!(
-                "ddc: showing {0} of {1} rows (offset {2}{3})",
-                "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
-                rp.rows.len(),
-                rp.total,
-                rp.offset,
-                match rp.next_offset {
-                    Some(n) => format!(", next_offset {n}"),
-                    None => String::new(),
-                }
-            )
-        );
+    let mut rows = Vec::new();
+    let total = crate::api::member_scan_window(
+        &common.input,
+        name.as_deref(),
+        class.as_deref(),
+        fuzzy_class,
+        kind_want,
+        &common.dex_filters,
+        offset,
+        limit,
+        |r| rows.push(r),
+    )?;
+    if rf == crate::ResolvedFormat::Json && (limit != 0 || offset != 0) {
+        let end = offset.saturating_add(rows.len());
+        let next = if end < total { Some(end) } else { None };
+        let v = serde_json::json!({
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "returned": rows.len(),
+            "next_offset": next,
+            "data": rows,
+        });
+        return crate::print_report(rf, &v);
     }
-    Ok(())
+    crate::print_report(rf, &rows)
 }
 
 // ---- hierarchy ---------------------------------------------------------------

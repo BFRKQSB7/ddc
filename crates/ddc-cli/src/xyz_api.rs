@@ -352,26 +352,27 @@ fn strings(_ctx: &Ctx, a: &StringsArgs) -> XyzResult<Vec<serde_json::Value>> {
             "limit/offset must be non-negative".to_string(),
         ));
     }
-    let rows = api::string_rows(
+    let offset = a.offset as usize;
+    let limit = a.limit as usize;
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    let total = api::string_scan_window(
         &p(&a.input),
         empty_or_some(&a.filter),
         a.with_locations,
         &a.dex,
+        offset,
+        limit,
+        |r| out.push(serde_json::to_value(r).unwrap_or(serde_json::Value::Null)),
     )
     .map_err(map_err)?;
-    let rp = api::window_rows(rows, a.offset as usize, a.limit as usize);
-    let mut out: Vec<serde_json::Value> = rp
-        .rows
-        .iter()
-        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
-        .collect();
-    if let Some(next) = rp.next_offset {
+    let end = offset.saturating_add(out.len());
+    if end < total {
         // 与 StringRow 同键（首行无 used_by 时不带该键），保证 MCP 表格可见。
         out.push(serde_json::json!({
             "dex": "",
             "string": format!(
                 "(truncated: showing {} of {} strings; pass offset={} to continue)",
-                rp.rows.len(), rp.total, next
+                out.len(), total, end
             ),
         }));
     }

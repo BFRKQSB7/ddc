@@ -1613,9 +1613,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xyz-rust"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f41e98196291f5e361c57ddf05ed29f04f693647032c8b1acaec3979a84147c8"
+checksum = "fe41e1b1b2ce624c22970c2877170a6130e4ce1e5a4721cc03a06f37350682c4"
 dependencies = [
  "axum",
  "axum-server",
@@ -1635,9 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "xyz-rust-macros"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4b45f9ab864c31c8b81c4f5f2ee0356fc2db9c46f1be04d08bc18bee61cdfcf"
+checksum = "bd77566bcddeb8026553f7ee67c39ac88fd6a75a81bf9f0a0c29f00fac466899"
 dependencies = [
  "proc-macro2",
  "quote",
