@@ -243,6 +243,9 @@ fn mcp_read() -> MCPHints {
 /// pipeline. Only reached with `serve` / `mcp` as the first argument
 /// (see main); returns the process exit code.
 pub fn run(args: Vec<String>) -> i32 {
+    // MCP serverInfo.version / X-App-Version / _meta.xyz.app_version 用
+    // ddc 自身版本，而不是 xyz 的默认 "dev"。必须在派发前调用。
+    xyz_rust::set_version(env!("CARGO_PKG_VERSION"));
     xyz_rust::define("ddc.info", info)
         .summary("App context and per-image statistics")
         .cli(skip_cli())

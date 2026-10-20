@@ -715,8 +715,6 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 [[package]]
 name = "jdc-core"
 version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2d5763bcf6d5f52c16dd1e61f6a1c71b40473542dbead373ea0f9eec85fc0b7"
 dependencies = [
  "bitflags",
 ]
@@ -1615,9 +1613,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xyz-rust"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdad15a5bfd8071ab041dc58db15fa215fd38be07259cf8e3f29eb373781407c"
+checksum = "f41e98196291f5e361c57ddf05ed29f04f693647032c8b1acaec3979a84147c8"
 dependencies = [
  "axum",
  "axum-server",
@@ -1637,9 +1635,9 @@ dependencies = [
 
 [[package]]
 name = "xyz-rust-macros"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2e011aa84587ad20e992ae590fccce58d5a1e78bb35c144374cad4cff52adf1"
+checksum = "c4b45f9ab864c31c8b81c4f5f2ee0356fc2db9c46f1be04d08bc18bee61cdfcf"
 dependencies = [
  "proc-macro2",
  "quote",
