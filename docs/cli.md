@@ -207,8 +207,11 @@ clean (timing prints only with `-o`).
 - **`ddc strings <input> [-f TEXT] [--with-locations]`** — the string
   table (one row per string). `-f` filters by substring;
   `--with-locations` walks every method's const-string sites and adds a
-  `used-by` column mapping each hit to its owner methods. `--limit` /
-  `--offset` page the rows (JSON gains `total`/`next_offset`); the MCP
+  `used-by` column mapping each hit to its owner methods. `--summary`
+  groups matching **reference sites** by owning class/package (which
+  packages use this URL/key?), drilled with `--prefix`/`--depth` and
+  optionally annotated with `--samples N` example classes. `--limit` /
+  `--offset` page rows (JSON gains `total`/`next_offset`); the MCP
   tool caps the default at 500 rows and appends a truncation hint.
 - **`ddc findrefs <input> <string|type|class|method|field> <query> [--class
   FQCN] [--fuzzy-class] [-o FILE]`** — every reference to a string
@@ -231,7 +234,8 @@ clean (timing prints only with `-o`).
   [--method|--field]`** — method/field name search over the method and
   field id tables; `--method` / `--field` restrict the kind. The default
   view groups matches by owning class/package with counts; `--full`
-  prints one row per member; `--format json` is available.
+  prints one row per member; `--format json` is available; the summary
+  accepts `--prefix/--depth/--sort/--limit/--offset/--samples N`.
 
 ### Understand structure
 

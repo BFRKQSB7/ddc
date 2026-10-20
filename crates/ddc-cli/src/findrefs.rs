@@ -157,6 +157,10 @@ impl<'a> RawDex<'a> {
 
     /// Raw MUTF-8 bytes of string `idx` (uleb length skipped).
     pub(crate) fn string_bytes(&self, idx: u32) -> Option<&'a [u8]> {
+        // 指令操作数是索引而非保证：畸形/混淆镜像会给出越界值。
+        if idx as usize >= self.str_n {
+            return None;
+        }
         let mut off = self.u4(self.str_off + 4 * idx as usize) as usize;
         if off >= self.d.len() {
             return None;

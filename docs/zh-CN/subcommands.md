@@ -16,7 +16,7 @@
 | `ddc listclasses app.apk [pattern]` | 带计数的前缀目录（默认）；`--prefix/--depth` 钻取，`--limit/--offset` 翻页，`--full` = 全量平铺 | **0.10s** |
 | `ddc info app.apk` | App 上下文（arsc 解析应用名、包名、版本、启动类、SDK、大小、md5）+ 每镜像 dex 计数 | **0.11s**（大文件的 md5 占大头） |
 | `ddc getclass app.apk com.example.Foo [-o F.java]` | 单类（含嵌套）定点反编译 | **0.03s**（典型类） |
-| `ddc strings app.apk [-f TEXT] [--with-locations]` | 字符串表清单；`--with-locations` 映射到所属方法；`--limit/--offset` 翻页 | **0.04s** |
+| `ddc strings app.apk [-f TEXT] [--with-locations]` | 字符串表；`--with-locations` 映射到方法；`--summary` = 按包统计引用位点；`--limit/--offset` 翻页 | **0.04s** |
 | `ddc members app.apk [NAME] [--class FQCN] [--method\|--field]` | 成员检索；默认类/包目录，`--full` = 逐条 | **0.04s** |
 | `ddc hierarchy app.apk FQCN` | 继承谱；默认按 relation 的包目录，`--full` = 逐条 | **0.04s** |
 | `ddc largest app.apk [-n N]` | 按指令数排序的 top-N 方法（找巨兽方法） | **0.06s** |

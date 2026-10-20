@@ -22,7 +22,7 @@ stdout output is clean (stderr silent); timing prints only with `-o`.
 | `ddc findrefs <input> type com.example.Foo` | type references (new-instance/check-cast/…) | ~0.5s |
 | `ddc findrefs <input> method onCreate --class android/app/Activity` | call sites | ~0.5s |
 | `ddc findrefs <input> field CREATOR --class com.example --fuzzy-class` | field read/write sites | ~0.5s |
-| `ddc strings <input> [-f TEXT] [--with-locations]` | string table; `--with-locations` maps const-string hits to owner methods; `--limit/--offset` page | **0.04s** |
+| `ddc strings <input> [-f TEXT] [--with-locations]` | string table; `--with-locations` maps hits to methods; `--summary` = reference sites per package; `--limit/--offset` page | **0.04s** |
 | `ddc members <input> [NAME] [--class FQCN] [--fuzzy-class] [--method\|--field]` | member search; default class/package frontier, `--full` = rows | **0.04s** |
 | `ddc hierarchy <input> FQCN` | lineage; default per-relation package frontier, `--full` = rows | **0.04s** |
 | `ddc largest <input> [-n N]` | top-N methods by instruction count | **0.06s** |

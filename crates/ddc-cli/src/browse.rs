@@ -94,6 +94,11 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
     let mut format = crate::OutFormat::Auto;
     let mut offset = 0usize;
     let mut limit = 0usize;
+    let mut summary = false;
+    let mut prefix: Option<String> = None;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut samples = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -106,8 +111,59 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "--with-locations" => with_loc = true,
+            "--summary" | "--tree" => summary = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_class_prefix(v);
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
             "--format" => {
                 format = crate::parse_format(&format_value(args, i)?)?;
+                i += 1;
+            }
+            "--samples" => {
+                samples = crate::parse_count(args.get(i + 1), "--samples")?;
                 i += 1;
             }
             "--limit" => {
@@ -137,8 +193,102 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
+    if !summary && (prefix.is_some() || depth.is_some() || sort_count || samples > 0) {
+        bail!(
+            "{}",
+            bi!(
+                "--prefix/--depth/--sort/--samples only apply to --summary",
+                "--prefix/--depth/--sort/--samples 仅适用于 --summary"
+            )
+        );
+    }
     let common = parse_common(&rest, "strings")?;
     let rf = crate::resolve_format(format);
+
+    if summary {
+        // 字符串没有层次——按**引用方类**聚合：哪些包在用这些字符串。
+        let mut counts = crate::api::string_owner_counts(
+            &common.input,
+            filter.as_deref(),
+            &common.dex_filters,
+        )?;
+        if let Some(p) = &prefix {
+            counts.retain(|(k, _)| crate::api::under_prefix(k, p, '.'));
+        }
+        let mut tree = crate::api::prefix_tree_sampled(
+            counts.iter().map(|(k, w)| (k.as_str(), *w)),
+            prefix.as_deref(),
+            depth,
+            '.',
+            samples,
+        );
+        if sort_count {
+            tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
+        }
+        let rp = crate::api::window_rows(tree, offset, limit);
+        let rows_json: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|r| {
+                crate::api::tree_row_json(r, "class", "package")
+            })
+            .collect();
+        match rf {
+            crate::ResolvedFormat::Jsonl => {
+                for row in &rows_json {
+                    println!("{}", serde_json::to_string(row)?);
+                }
+                return Ok(());
+            }
+            crate::ResolvedFormat::Json => {
+                let v = serde_json::json!({
+                    "view": "tree",
+                    "filter": filter.unwrap_or_default(),
+                    "prefix": prefix.unwrap_or_default(),
+                    "depth": depth,
+                    "total": rp.total,
+                    "offset": rp.offset,
+                    "limit": rp.limit,
+                    "returned": rp.rows.len(),
+                    "next_offset": rp.next_offset,
+                    "rows": rows_json,
+                });
+                return crate::print_report(rf, &v);
+            }
+            crate::ResolvedFormat::Table | crate::ResolvedFormat::Markdown => {
+                return crate::print_report(rf, &rows_json);
+            }
+            crate::ResolvedFormat::Text => {}
+        }
+        for r in &rp.rows {
+            match r.kind {
+                crate::api::TreeKind::Group => {
+                    println!("{}/ ({}){}", r.path, r.count, crate::api::samples_suffix(r))
+                }
+                crate::api::TreeKind::Leaf if r.count > 1 => {
+                    println!("{} ({})", r.path, r.count)
+                }
+                crate::api::TreeKind::Leaf => println!("{}", r.path),
+            }
+        }
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
+        }
+        return Ok(());
+    }
 
     if rf == crate::ResolvedFormat::Text {
         println!(
@@ -229,6 +379,7 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
     let mut summary_explicit = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
+    let mut samples = 0usize;
     let mut offset = 0usize;
     let mut limit = 0usize;
     let mut i = 0;
@@ -296,6 +447,10 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
                 }
                 i += 1;
             }
+            "--samples" => {
+                samples = crate::parse_count(args.get(i + 1), "--samples")?;
+                i += 1;
+            }
             "--limit" => {
                 limit = crate::parse_count(args.get(i + 1), "--limit")?;
                 i += 1;
@@ -332,12 +487,12 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
             )
         );
     }
-    if full && (depth.is_some() || sort_count) {
+    if full && (depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
-                "--depth and --sort only apply to the summary view (the default); drop --full",
-                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
+                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
             )
         );
     }
@@ -360,11 +515,12 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
         if let Some(p) = &prefix {
             counts.retain(|(k, _)| crate::api::under_prefix(k, p, '.'));
         }
-        let mut tree = crate::api::prefix_tree(
+        let mut tree = crate::api::prefix_tree_sampled(
             counts.iter().map(|(k, w)| (k.as_str(), *w)),
             prefix.as_deref(),
             depth,
             '.',
+            samples,
         );
         if sort_count {
             tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
@@ -374,14 +530,7 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
             .rows
             .iter()
             .map(|r| {
-                serde_json::json!({
-                    "path": r.path,
-                    "kind": match r.kind {
-                        crate::api::TreeKind::Leaf => "class",
-                        crate::api::TreeKind::Group => "package",
-                    },
-                    "count": r.count,
-                })
+                crate::api::tree_row_json(r, "class", "package")
             })
             .collect();
         match rf {
@@ -412,7 +561,9 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
         }
         for r in &rp.rows {
             match r.kind {
-                crate::api::TreeKind::Group => println!("{}/ ({})", r.path, r.count),
+                crate::api::TreeKind::Group => {
+                    println!("{}/ ({}){}", r.path, r.count, crate::api::samples_suffix(r))
+                }
                 crate::api::TreeKind::Leaf if r.count > 1 => {
                     println!("{} ({})", r.path, r.count)
                 }
@@ -521,6 +672,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
     let mut summary_explicit = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
+    let mut samples = 0usize;
     let mut offset = 0usize;
     let mut limit = 0usize;
     let mut i = 0;
@@ -589,6 +741,10 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
                 }
                 i += 1;
             }
+            "--samples" => {
+                samples = crate::parse_count(args.get(i + 1), "--samples")?;
+                i += 1;
+            }
             "--limit" => {
                 limit = crate::parse_count(args.get(i + 1), "--limit")?;
                 i += 1;
@@ -614,12 +770,12 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
             )
         );
     }
-    if full && (depth.is_some() || sort_count) {
+    if full && (depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
-                "--depth and --sort only apply to the summary view (the default); drop --full",
-                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
+                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
             )
         );
     }
@@ -651,11 +807,12 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
             if keys.is_empty() {
                 continue;
             }
-            let tree = crate::api::prefix_tree(
+            let tree = crate::api::prefix_tree_sampled(
                 keys.iter().map(|k| (k.as_str(), 1usize)),
                 prefix.as_deref(),
                 depth,
                 '.',
+                samples,
             );
             for row in tree {
                 combined.push((ri, rel.to_string(), row));
@@ -684,6 +841,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
                         crate::api::TreeKind::Group => "package",
                     },
                     "count": r.count,
+                    "samples": r.samples,
                 })
             })
             .collect();
@@ -715,7 +873,13 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
         }
         for (_, rel, row) in &rp.rows {
             match row.kind {
-                crate::api::TreeKind::Group => println!("{:<12} {}/ ({})", rel, row.path, row.count),
+                crate::api::TreeKind::Group => println!(
+                    "{:<12} {}/ ({}){}",
+                    rel,
+                    row.path,
+                    row.count,
+                    crate::api::samples_suffix(row)
+                ),
                 crate::api::TreeKind::Leaf => println!("{:<12} {}", rel, row.path),
             }
         }
@@ -1899,6 +2063,7 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
     let mut summary_explicit = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
+    let mut samples = 0usize;
     let mut offset = 0usize;
     let mut limit = 0usize;
     let mut i = 0;
@@ -1959,6 +2124,10 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
                 }
                 i += 1;
             }
+            "--samples" => {
+                samples = crate::parse_count(args.get(i + 1), "--samples")?;
+                i += 1;
+            }
             "--limit" => {
                 limit = crate::parse_count(args.get(i + 1), "--limit")?;
                 i += 1;
@@ -1984,12 +2153,12 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
             )
         );
     }
-    if full && (depth.is_some() || sort_count) {
+    if full && (depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
-                "--depth and --sort only apply to the summary view (the default); drop --full",
-                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
+                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
             )
         );
     }
@@ -2040,11 +2209,12 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
             })
             .map(|e| e.name.clone())
             .collect();
-        let mut tree = crate::api::prefix_tree(
+        let mut tree = crate::api::prefix_tree_sampled(
             keys.iter().map(|k| (k.as_str(), 1usize)),
             prefix.as_deref(),
             depth,
             '/',
+            samples,
         );
         if sort_count {
             tree.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
@@ -2053,9 +2223,12 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
         let mut text = String::new();
         for r in &rp.rows {
             match r.kind {
-                crate::api::TreeKind::Group => {
-                    text.push_str(&format!("{}/ ({})\n", r.path, r.count))
-                }
+                crate::api::TreeKind::Group => text.push_str(&format!(
+                    "{}/ ({}){}\n",
+                    r.path,
+                    r.count,
+                    crate::api::samples_suffix(r)
+                )),
                 crate::api::TreeKind::Leaf if r.count > 1 => {
                     text.push_str(&format!("{} ({})\n", r.path, r.count))
                 }

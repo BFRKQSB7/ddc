@@ -175,7 +175,7 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   `--prefix` 展开目录，另有 `--depth/--sort/--limit/--offset`。带条目：
   输出内容 —— 二进制 XML（首块 `0x0003`）走 AXML 解码器，文本直出，
   二进制经 `-o` 保存（否则错误会提示你）。条目匹配：先精确名，再唯一
-  子串。
+  子串。默认视图是目录前沿（`res/drawable/ (1234)`），支持同样的摘要参数。
 
 ### 找东西
 
@@ -200,7 +200,8 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
 - **`ddc members <输入> [名字] [--class FQCN] [--fuzzy-class]
   [--method|--field]`** —— 方法/字段名检索；`--method` / `--field` 限定
   种类。默认视图按所属类/包分组计数；`--full` 输出逐条成员行；
-  支持 `--format json`。
+  支持 `--format json`；摘要接受
+  `--prefix/--depth/--sort/--limit/--offset/--samples N`。
 
 ### 看清结构
 
@@ -208,7 +209,8 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   `extends` / `implements`，反向对每个继承/实现它的类输出 `sub` / `impl`。
   跨镜像有效（父类在别的 dex 时按名字匹配）。默认视图按 relation 分组
   的前缀目录（`sub com.example/ (123)`），15 万子类也一屏可见；`--full`
-  输出逐条关系行，`--prefix/--depth/--sort/--limit/--offset` 调整视图。
+  输出逐条关系行，`--prefix/--depth/--sort/--limit/--offset` 调整视图，
+  `--samples N` 给目录行附示例类。
 - **`ddc largest <输入> [-n N]`** —— 按指令数排序的 top-N 方法（找巨兽；
   默认 20）。
 - **`ddc disasm <输入> FQCN[.方法]`** —— 一个类或一个方法的原始字节码：

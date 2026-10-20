@@ -382,6 +382,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope (a.b matches a.b and a.b.*); expand a frontier row"),
                 ("--depth N", "with --summary: aggregate exactly N segments below the scope"),
                 ("--sort name|count", "with --summary: row order (count = biggest groups first)"),
+                ("--samples N", "with --summary: show up to N example class names per group"),
                 ("--limit N", "keep at most N rows/classes (0 = unlimited); JSON gains total/next_offset"),
                 ("--offset M", "skip M rows/classes — resume where the previous page stopped"),
             ],
@@ -443,6 +444,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "with summary: show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
             ],
@@ -465,8 +467,13 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-f, --filter TEXT", "keep strings containing TEXT (case-insensitive)"),
                 ("--with-locations", "map each string to its referencing methods"),
-                ("--limit N", "keep at most N strings (0 = unlimited); JSON gains total/next_offset"),
-                ("--offset M", "skip M strings — resume where the previous page stopped"),
+                ("--summary, --tree", "group matching reference sites by owning class/package"),
+                ("--prefix P", "with --summary: segment-exact owner-class scope"),
+                ("--depth N", "with --summary: aggregate exactly N segments below the scope"),
+                ("--sort name|count", "with --summary: row order"),
+                ("--samples N", "with --summary: example owner classes per group"),
+                ("--limit N", "keep at most N rows/strings (0 = unlimited); JSON gains total/next_offset"),
+                ("--offset M", "skip M rows/strings — resume where the previous page stopped"),
                 DEX_EN,
                 FMT_ROW_EN,
             ],
@@ -474,6 +481,8 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("ddc strings app.apk -f token", "strings containing \"token\""),
                 ("ddc strings app.apk -f api_key --with-locations", "each hit mapped to its referencing methods"),
                 ("ddc strings app.apk --limit 50 --offset 100 --format json", "paged string table"),
+                ("ddc strings app.apk -f http --summary --sort count", "which packages use URLs (reference sites)"),
+                ("ddc strings app.apk -f api_key --summary --samples 2", "groups with example owner classes"),
             ],
         },
     ),
@@ -493,6 +502,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "with summary: show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
                 OUT_FILE_EN,
@@ -523,6 +533,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "with summary: show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
@@ -552,6 +563,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "with summary: show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
@@ -578,6 +590,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "with summary: show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
                 DEX_EN,
@@ -725,6 +738,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围（a.b 匹配 a.b 与 a.b.*），用于展开目录行"),
                 ("--depth N", "配合 --summary：在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "配合 --summary：行序（count = 大类优先）"),
+                ("--samples N", "配合 --summary：每个目录行附最多 N 个示例类名"),
                 ("--limit N", "最多返回 N 行/类（0 = 不限）；JSON 附带 total/next_offset"),
                 ("--offset M", "跳过 M 行/类——从上一页结束处继续"),
             ],
@@ -785,6 +799,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
+                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
             ],
@@ -807,8 +822,13 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-f, --filter TEXT", "只保留包含 TEXT 的字符串（大小写不敏感）"),
                 ("--with-locations", "将每个字符串映射到引用它的方法"),
-                ("--limit N", "最多 N 个字符串（0 = 不限）；JSON 附带 total/next_offset"),
-                ("--offset M", "跳过 M 个字符串——从上一页结束处继续"),
+                ("--summary, --tree", "按引用方类/包分组统计匹配的引用位点"),
+                ("--prefix P", "配合 --summary：引用方类的段级精确范围"),
+                ("--depth N", "配合 --summary：在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "配合 --summary：行序"),
+                ("--samples N", "配合 --summary：每个目录行附示例类名"),
+                ("--limit N", "最多 N 行/字符串（0 = 不限）；JSON 附带 total/next_offset"),
+                ("--offset M", "跳过 M 行/字符串——从上一页结束处继续"),
                 DEX_ZH,
                 FMT_ROW_ZH,
             ],
@@ -816,6 +836,8 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("ddc strings app.apk -f token", "包含 \"token\" 的字符串"),
                 ("ddc strings app.apk -f api_key --with-locations", "每个命中映射到引用它的方法"),
                 ("ddc strings app.apk --limit 50 --offset 100 --format json", "翻页字符串表"),
+                ("ddc strings app.apk -f http --summary --sort count", "哪些包在用 URL（引用位点计数）"),
+                ("ddc strings app.apk -f api_key --summary --samples 2", "目录行附示例引用类"),
             ],
         },
     ),
@@ -835,6 +857,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
+                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 OUT_FILE_ZH,
@@ -865,6 +888,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
+                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -894,6 +918,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
+                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -921,6 +946,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
+                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -1934,6 +1960,7 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
     let mut sort_count = false;
     let mut offset = 0usize;
     let mut limit = 0usize;
+    let mut samples = 0usize;
     let mut dex_filters: Vec<String> = Vec::new();
     let mut format = OutFormat::Auto;
     let mut i = 0;
@@ -1995,6 +2022,10 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
                 }
                 i += 1;
             }
+            "--samples" => {
+                samples = parse_count(args.get(i + 1), "--samples")?;
+                i += 1;
+            }
             "--limit" => {
                 limit = parse_count(args.get(i + 1), "--limit")?;
                 i += 1;
@@ -2046,12 +2077,12 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
             )
         );
     }
-    if full && (depth.is_some() || sort_count) {
+    if full && (depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
-                "--depth and --sort only apply to the summary view (the default); drop --full",
-                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
+                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
             )
         );
     }
@@ -2068,7 +2099,13 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
             0,
         )?;
         let scope_classes = page.names.len();
-        let mut rows = crate::api::class_tree(&page.names, prefix.as_deref(), depth);
+        let mut rows = crate::api::prefix_tree_sampled(
+            page.names.iter().map(|n| (n.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '.',
+            samples,
+        );
         if sort_count {
             rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
         }
@@ -2077,14 +2114,20 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
             .rows
             .iter()
             .map(|row| {
-                serde_json::json!({
-                    "path": row.path,
-                    "kind": match row.kind {
-                        crate::api::TreeKind::Leaf => "class",
-                        crate::api::TreeKind::Group => "package",
-                    },
-                    "classes": row.count,
-                })
+                {
+                    let mut v = serde_json::json!({
+                        "path": row.path,
+                        "kind": match row.kind {
+                            crate::api::TreeKind::Leaf => "class",
+                            crate::api::TreeKind::Group => "package",
+                        },
+                        "classes": row.count,
+                    });
+                    if !row.samples.is_empty() {
+                        v["samples"] = serde_json::json!(row.samples);
+                    }
+                    v
+                }
             })
             .collect();
         match rf {
@@ -2117,7 +2160,9 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
         }
         for row in &rp.rows {
             match row.kind {
-                crate::api::TreeKind::Group => println!("{}/ ({})", row.path, row.count),
+                crate::api::TreeKind::Group => {
+                    println!("{}/ ({}){}", row.path, row.count, crate::api::samples_suffix(row))
+                }
                 crate::api::TreeKind::Leaf => println!("{}", row.path),
             }
         }
@@ -2612,6 +2657,7 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
     let mut sort_count = false;
     let mut offset = 0usize;
     let mut limit = 0usize;
+    let mut samples = 0usize;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -2679,6 +2725,10 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
                 }
                 i += 1;
             }
+            "--samples" => {
+                samples = parse_count(args.get(i + 1), "--samples")?;
+                i += 1;
+            }
             "--limit" => {
                 limit = parse_count(args.get(i + 1), "--limit")?;
                 i += 1;
@@ -2728,12 +2778,12 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
             )
         );
     }
-    if full && (depth.is_some() || sort_count) {
+    if full && (depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
-                "--depth and --sort only apply to the summary view (the default); drop --full",
-                "--depth 与 --sort 仅适用于摘要视图（默认）；请去掉 --full"
+                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
+                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
             )
         );
     }
@@ -2781,11 +2831,12 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
     if summary {
         // 按 owner 类做前缀目录：一行 = 分叉包（命中数）或类（命中数）。
         let keys: Vec<String> = hits.iter().map(|h| h.class.replace('/', ".")).collect();
-        let mut rows = crate::api::prefix_tree(
+        let mut rows = crate::api::prefix_tree_sampled(
             keys.iter().map(|k| (k.as_str(), 1usize)),
             prefix.as_deref(),
             depth,
             '.',
+            samples,
         );
         if sort_count {
             rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.path.cmp(&b.path)));
@@ -2795,14 +2846,20 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
             .rows
             .iter()
             .map(|r| {
-                serde_json::json!({
-                    "path": r.path,
-                    "kind": match r.kind {
-                        crate::api::TreeKind::Leaf => "class",
-                        crate::api::TreeKind::Group => "package",
-                    },
-                    "count": r.count,
-                })
+                {
+                    let mut v = serde_json::json!({
+                        "path": r.path,
+                        "kind": match r.kind {
+                            crate::api::TreeKind::Leaf => "class",
+                            crate::api::TreeKind::Group => "package",
+                        },
+                        "count": r.count,
+                    });
+                    if !r.samples.is_empty() {
+                        v["samples"] = serde_json::json!(r.samples);
+                    }
+                    v
+                }
             })
             .collect();
         if out.is_none() && rf != ResolvedFormat::Text {
@@ -2837,7 +2894,9 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
             .rows
             .iter()
             .map(|r| match r.kind {
-                crate::api::TreeKind::Group => format!("{}/ ({})", r.path, r.count),
+                crate::api::TreeKind::Group => {
+                    format!("{}/ ({}){}", r.path, r.count, crate::api::samples_suffix(r))
+                }
                 crate::api::TreeKind::Leaf => r.path.clone(),
             })
             .collect();

@@ -203,6 +203,8 @@ pub struct TreeRow {
     pub kind: TreeKind,
     /// Items in this subtree (the item's own weight for a leaf).
     pub count: usize,
+    /// Up to N representative leaf names under a group row (opt-in).
+    pub samples: Vec<String>,
 }
 
 /// A page of class names plus the pre-window match count.
@@ -339,18 +341,79 @@ impl TrieNode {
 /// yield. `depth == Some(n)` instead aggregates at exactly `n` segments
 /// below the scope (classes that terminate earlier still appear).
 /// Rows come out in segment-lexicographic order (deterministic).
+#[cfg(test)]
 pub fn class_tree(names: &[String], prefix: Option<&str>, depth: Option<usize>) -> Vec<TreeRow> {
     prefix_tree(names.iter().map(|n| (n.as_str(), 1)), prefix, depth, '.')
+}
+
+/// Frontend suffix for a group row: `  e.g. a, b, c` (empty when no samples).
+pub fn samples_suffix(r: &TreeRow) -> String {
+    if r.samples.is_empty() {
+        String::new()
+    } else {
+        format!("  e.g. {}", r.samples.join(", "))
+    }
+}
+
+/// Collect up to `want` leaf paths under `node` (depth-first, in-order).
+fn sample_leaves(node: &TrieNode, path: &str, sep: char, want: usize, out: &mut Vec<String>) {
+    if out.len() >= want {
+        return;
+    }
+    if node.self_count > 0 {
+        out.push(path.to_string());
+    }
+    for (seg, child) in &node.children {
+        if out.len() >= want {
+            return;
+        }
+        let mut p = path.to_string();
+        p.push(sep);
+        p.push_str(seg);
+        sample_leaves(child, &p, sep, want, out);
+    }
 }
 
 /// Generic weighted segment tree over `(key, weight)` items. Duplicate
 /// keys accumulate their weights, so callers can aggregate rows (hits,
 /// members, resources) as well as unique names.
+#[cfg(test)]
 pub fn prefix_tree<'a, I>(
     items: I,
     prefix: Option<&str>,
     depth: Option<usize>,
     sep: char,
+) -> Vec<TreeRow>
+where
+    I: IntoIterator<Item = (&'a str, usize)>,
+{
+    prefix_tree_sampled(items, prefix, depth, sep, 0)
+}
+
+/// JSON row for a summary view. `samples` is present only when requested.
+pub fn tree_row_json(r: &TreeRow, leaf_kind: &str, group_kind: &str) -> serde_json::Value {
+    let mut v = serde_json::json!({
+        "path": r.path,
+        "kind": match r.kind {
+            TreeKind::Leaf => leaf_kind,
+            TreeKind::Group => group_kind,
+        },
+        "count": r.count,
+    });
+    if !r.samples.is_empty() {
+        v["samples"] = serde_json::json!(r.samples);
+    }
+    v
+}
+
+/// [`prefix_tree`] with up to `samples` representative leaf names attached
+/// to each group row (filled during traversal, bounded by `samples`).
+pub fn prefix_tree_sampled<'a, I>(
+    items: I,
+    prefix: Option<&str>,
+    depth: Option<usize>,
+    sep: char,
+    samples: usize,
 ) -> Vec<TreeRow>
 where
     I: IntoIterator<Item = (&'a str, usize)>,
@@ -381,6 +444,7 @@ where
             path: scope_path.to_string(),
             kind: TreeKind::Leaf,
             count: scope.self_count,
+            samples: Vec::new(),
         });
     }
     for (seg, child) in &scope.children {
@@ -390,14 +454,20 @@ where
             format!("{scope_path}{sep}{seg}")
         };
         match depth {
-            None => emit_adaptive(child, path, sep, &mut out),
-            Some(target) => emit_fixed(child, path, sep, 1, target, &mut out),
+            None => emit_adaptive(child, path, sep, samples, &mut out),
+            Some(target) => emit_fixed(child, path, sep, 1, target, samples, &mut out),
         }
     }
     out
 }
 
-fn emit_adaptive(node: &TrieNode, path: String, sep: char, out: &mut Vec<TreeRow>) {
+fn emit_adaptive(
+    node: &TrieNode,
+    path: String,
+    sep: char,
+    samples: usize,
+    out: &mut Vec<TreeRow>,
+) {
     let mut path = path;
     let mut node = node;
     loop {
@@ -406,6 +476,7 @@ fn emit_adaptive(node: &TrieNode, path: String, sep: char, out: &mut Vec<TreeRow
                 path: path.clone(),
                 kind: TreeKind::Leaf,
                 count: node.self_count,
+                samples: Vec::new(),
             });
         }
         if node.children.is_empty() {
@@ -418,10 +489,13 @@ fn emit_adaptive(node: &TrieNode, path: String, sep: char, out: &mut Vec<TreeRow
             node = child;
             continue;
         }
+        let mut s = Vec::new();
+        sample_leaves(node, &path, sep, samples, &mut s);
         out.push(TreeRow {
             path,
             kind: TreeKind::Group,
             count: node.count,
+            samples: s,
         });
         return;
     }
@@ -433,6 +507,7 @@ fn emit_fixed(
     sep: char,
     level: usize,
     target: usize,
+    samples: usize,
     out: &mut Vec<TreeRow>,
 ) {
     if node.self_count > 0 {
@@ -440,16 +515,20 @@ fn emit_fixed(
             path: path.clone(),
             kind: TreeKind::Leaf,
             count: node.self_count,
+            samples: Vec::new(),
         });
     }
     if node.children.is_empty() {
         return;
     }
     if level == target {
+        let mut s = Vec::new();
+        sample_leaves(node, &path, sep, samples, &mut s);
         out.push(TreeRow {
             path,
             kind: TreeKind::Group,
             count: node.count,
+            samples: s,
         });
         return;
     }
@@ -457,7 +536,7 @@ fn emit_fixed(
         let mut p = path.clone();
         p.push(sep);
         p.push_str(seg);
-        emit_fixed(child, p, sep, level + 1, target, out);
+        emit_fixed(child, p, sep, level + 1, target, samples, out);
     }
 }
 
@@ -596,6 +675,79 @@ pub fn main_activity(input: &Path) -> Result<MainActivityReport> {
 
 /// String-table rows; `filter` is a substring filter, `with_locations`
 /// maps each string to its referencing methods.
+/// String-reference counts per owning class, for the summary view.
+/// Counts matching const-string sites during one code walk; one class
+/// name resolution per class with hits (no per-hit allocation).
+pub fn string_owner_counts(
+    input: &Path,
+    filter: Option<&str>,
+    dex_filters: &[String],
+) -> Result<Vec<(String, usize)>> {
+    let mut by_class: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for_each_image(&input.to_path_buf(), dex_filters, &mut |_label, image| {
+        let Ok(dex) = RawDex::parse(image) else {
+            return;
+        };
+        let needle = filter.map(str::as_bytes);
+        for ci in 0..dex.cls_n {
+            let Some((ty, _, _, cdo, _)) = dex.class_def_parts(ci) else {
+                continue;
+            };
+            let Some(methods) = dex.methods_of(cdo as usize) else {
+                continue;
+            };
+            let mut local = 0usize;
+            for (_midx, _acc, code_off) in methods {
+                if code_off == 0 || code_off as usize + 16 > dex.d.len() {
+                    continue;
+                }
+                let insns = u32::from_le_bytes([
+                    dex.d[code_off as usize + 12],
+                    dex.d[code_off as usize + 13],
+                    dex.d[code_off as usize + 14],
+                    dex.d[code_off as usize + 15],
+                ]) as usize;
+                let start = code_off as usize + 16;
+                let end = (start + 2 * insns).min(dex.d.len());
+                if start >= end {
+                    continue;
+                }
+                ddc_dex::insn::scan_instructions(&dex.d[start..end], &mut |op, pc, bytes| {
+                    if op != 0x1a && op != 0x1b {
+                        return;
+                    }
+                    let lo = 2 * (pc + 1);
+                    let idx = if op == 0x1b && lo + 4 <= bytes.len() {
+                        u32::from_le_bytes([bytes[lo], bytes[lo + 1], bytes[lo + 2], bytes[lo + 3]])
+                    } else if lo + 2 <= bytes.len() {
+                        u16::from_le_bytes([bytes[lo], bytes[lo + 1]]) as u32
+                    } else {
+                        return;
+                    };
+                    let Some(sb) = dex.string_bytes(idx) else {
+                        return;
+                    };
+                    let hit = match needle {
+                        Some(f) => sb.len() >= f.len() && sb.windows(f.len()).any(|w| w == f),
+                        None => true,
+                    };
+                    if hit {
+                        local += 1;
+                    }
+                });
+            }
+            if local > 0 {
+                let name = dex.class_name(ty).replace('/', ".");
+                if !name.is_empty() {
+                    *by_class.entry(name).or_default() += local;
+                }
+            }
+        }
+    })?;
+    Ok(by_class.into_iter().collect())
+}
+
 /// Windowed string-table scan: emits `[offset, offset+limit)` and returns
 /// the total match count. Only the window's rows are decoded/quoted, and
 /// `--with-locations` collects users only for window strings and only for

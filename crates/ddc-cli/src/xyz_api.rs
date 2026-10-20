@@ -65,6 +65,8 @@ struct ListclassesArgs {
     depth: i64,
     #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
     sort: String,
+    #[xyz(desc = "with summary: sample leaf names per group row (0 = off)")]
+    samples: i64,
     #[xyz(desc = "maximum rows to return (0 = unlimited)")]
     limit: i64,
     #[xyz(desc = "number of rows to skip")]
@@ -77,10 +79,10 @@ struct ListclassesArgs {
 /// leaves as the bare name (grep-friendly). The CLI adds a JSON envelope
 /// with totals; the REST/MCP channels currently return text rows only.
 fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
-    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 || a.samples < 0 {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "limit/offset/depth must be non-negative".to_string(),
+            "limit/offset/depth/samples must be non-negative".to_string(),
         ));
     }
     if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
@@ -89,10 +91,10 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
         ));
     }
     let prefix = {
@@ -113,7 +115,13 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
         )
         .map_err(map_err)?;
         let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
-        let mut rows = api::class_tree(&page.names, prefix.as_deref(), depth);
+        let mut rows = api::prefix_tree_sampled(
+            page.names.iter().map(|n| (n.as_str(), 1usize)),
+            prefix.as_deref(),
+            depth,
+            '.',
+            a.samples as usize,
+        );
         if a.sort == "count" {
             rows.sort_by(|x, y| y.count.cmp(&x.count).then_with(|| x.path.cmp(&y.path)));
         }
@@ -122,7 +130,9 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
             .rows
             .iter()
             .map(|r| match r.kind {
-                api::TreeKind::Group => format!("{}/ ({})", r.path, r.count),
+                api::TreeKind::Group => {
+                    format!("{}/ ({}){}", r.path, r.count, api::samples_suffix(r))
+                }
                 api::TreeKind::Leaf if r.count > 1 => format!("{} ({})", r.path, r.count),
                 api::TreeKind::Leaf => r.path.clone(),
             })
@@ -221,6 +231,8 @@ struct FindRefsArgs {
     depth: i64,
     #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
     sort: String,
+    #[xyz(desc = "with summary: sample owner classes per group row (0 = off)")]
+    samples: i64,
     #[xyz(desc = "maximum rows to return (0 = unlimited)")]
     limit: i64,
     #[xyz(desc = "number of rows to skip")]
@@ -230,10 +242,10 @@ struct FindRefsArgs {
 }
 
 fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
-    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 || a.samples < 0 {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "limit/offset/depth must be non-negative".to_string(),
+            "limit/offset/depth/samples must be non-negative".to_string(),
         ));
     }
     if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
@@ -242,10 +254,10 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
         ));
     }
     let prefix = {
@@ -269,11 +281,12 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
     if !a.full {
         let keys: Vec<String> = rows.iter().map(|r| r.class.clone()).collect();
         let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
-        let mut tree = api::prefix_tree(
+        let mut tree = api::prefix_tree_sampled(
             keys.iter().map(|k| (k.as_str(), 1usize)),
             prefix.as_deref(),
             depth,
             '.',
+            a.samples as usize,
         );
         if a.sort == "count" {
             tree.sort_by(|x, y| y.count.cmp(&x.count).then_with(|| x.path.cmp(&y.path)));
@@ -283,14 +296,7 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
             .rows
             .iter()
             .map(|r| {
-                serde_json::json!({
-                    "path": r.path,
-                    "kind": match r.kind {
-                        api::TreeKind::Leaf => "class",
-                        api::TreeKind::Group => "package",
-                    },
-                    "count": r.count,
-                })
+                api::tree_row_json(r, "class", "package")
             })
             .collect();
         if let Some(next) = rp.next_offset {
@@ -337,6 +343,16 @@ struct StringsArgs {
     filter: String,
     #[xyz(desc = "map each string to its referencing methods")]
     with_locations: bool,
+    #[xyz(desc = "summarize matching reference sites by owning class/package")]
+    summary: bool,
+    #[xyz(desc = "with summary: segment-exact owner-class scope")]
+    prefix: String,
+    #[xyz(desc = "with summary: aggregate exactly N segments below the prefix (0 = adaptive)")]
+    depth: i64,
+    #[xyz(desc = "with summary: row order", enum = "name,count")]
+    sort: String,
+    #[xyz(desc = "with summary: sample owner classes per group row (0 = off)")]
+    samples: i64,
     #[xyz(desc = "maximum rows to return (0 = unlimited)")]
     limit: i64,
     #[xyz(desc = "number of rows to skip")]
@@ -346,13 +362,65 @@ struct StringsArgs {
 }
 
 fn strings(_ctx: &Ctx, a: &StringsArgs) -> XyzResult<Vec<serde_json::Value>> {
-    if a.limit < 0 || a.offset < 0 {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 || a.samples < 0 {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "limit/offset must be non-negative".to_string(),
+            "limit/offset/depth/samples must be non-negative".to_string(),
+        ));
+    }
+    if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            format!("sort must be name|count, got {:?}", a.sort),
+        ));
+    }
+    let prefix = {
+        let n = api::normalize_class_prefix(&a.prefix);
+        if n.is_empty() { None } else { Some(n) }
+    };
+    if !a.summary && (prefix.is_some() || a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "prefix/depth/sort/samples only apply to summary=true".to_string(),
         ));
     }
     let offset = a.offset as usize;
+    if a.summary {
+        // 哪些包/类在引用匹配的字符串（引用位点计数）。
+        let mut counts = api::string_owner_counts(&p(&a.input), empty_or_some(&a.filter), &a.dex)
+            .map_err(map_err)?;
+        if let Some(pfx) = &prefix {
+            counts.retain(|(k, _)| api::under_prefix(k, pfx, '.'));
+        }
+        let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
+        let mut tree = api::prefix_tree_sampled(
+            counts.iter().map(|(k, w)| (k.as_str(), *w)),
+            prefix.as_deref(),
+            depth,
+            '.',
+            a.samples as usize,
+        );
+        if a.sort == "count" {
+            tree.sort_by(|x, y| y.count.cmp(&x.count).then_with(|| x.path.cmp(&y.path)));
+        }
+        let rp = api::window_rows(tree, offset, a.limit as usize);
+        let mut out: Vec<serde_json::Value> = rp
+            .rows
+            .iter()
+            .map(|r| api::tree_row_json(r, "class", "package"))
+            .collect();
+        if let Some(next) = rp.next_offset {
+            out.push(serde_json::json!({
+                "path": format!(
+                    "(truncated: showing {} of {} rows; pass offset={} to continue)",
+                    rp.rows.len(), rp.total, next
+                ),
+                "kind": "truncated",
+                "count": 0,
+            }));
+        }
+        return Ok(out);
+    }
     let limit = a.limit as usize;
     let mut out: Vec<serde_json::Value> = Vec::new();
     let total = api::string_scan_window(
@@ -395,6 +463,8 @@ struct HierarchyArgs {
     depth: i64,
     #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
     sort: String,
+    #[xyz(desc = "with summary: sample subclasses per group row (0 = off)")]
+    samples: i64,
     #[xyz(desc = "maximum rows to return (0 = unlimited)")]
     limit: i64,
     #[xyz(desc = "number of rows to skip")]
@@ -404,10 +474,10 @@ struct HierarchyArgs {
 }
 
 fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>> {
-    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 || a.samples < 0 {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "limit/offset/depth must be non-negative".to_string(),
+            "limit/offset/depth/samples must be non-negative".to_string(),
         ));
     }
     if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
@@ -416,10 +486,10 @@ fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>>
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
         return Err(errs::new(
             errs::Kind::InvalidInput,
-            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
         ));
     }
     let prefix = {
@@ -447,11 +517,12 @@ fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>>
             if keys.is_empty() {
                 continue;
             }
-            let tree = api::prefix_tree(
+            let tree = api::prefix_tree_sampled(
                 keys.iter().map(|k| (k.as_str(), 1usize)),
                 prefix.as_deref(),
                 depth,
                 '.',
+                a.samples as usize,
             );
             for row in tree {
                 combined.push((ri, rel.to_string(), row));
@@ -472,15 +543,11 @@ fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>>
             .rows
             .iter()
             .map(|(_, rel, r)| {
-                serde_json::json!({
-                    "relation": rel,
-                    "path": r.path,
-                    "kind": match r.kind {
-                        api::TreeKind::Leaf => "class",
-                        api::TreeKind::Group => "package",
-                    },
-                    "count": r.count,
-                })
+                {
+                        let mut v = api::tree_row_json(r, "class", "package");
+                        v["relation"] = serde_json::json!(rel);
+                        v
+                    }
             })
             .collect();
         if let Some(next) = rp.next_offset {
@@ -643,7 +710,7 @@ pub fn run(args: Vec<String>) -> i32 {
                 .http(http("/findrefs"))
                 .mcp(mcp_capped()),
             &xyz_rust::define("ddc.strings", strings)
-                .summary("String table; pageable with limit/offset (MCP caps at 500)")
+                .summary("String table; pageable (MCP caps at 500), or summary=true = reference site counts by package")
                 .cli(skip_cli())
                 .http(http("/strings"))
                 .mcp(mcp_capped()),
