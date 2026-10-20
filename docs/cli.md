@@ -179,7 +179,7 @@ clean (timing prints only with `-o`).
   scope); `--sort count` puts the biggest groups first. `--limit` /
   `--offset` page rows (classes in the flat view): `--format json`
   carries `total`/`offset`/`returned`/`next_offset`, and the summary view
-  is always a JSON object with `rows[].path/kind/classes`. `--full`
+  is always a JSON object with `rows[].path/kind/classes`. `--flat`
   restores the pre-summary behavior: flat, unwindowed class names.
 - **`ddc manifest <apk> [--component C] [-o FILE]`** — decodes the
   binary AndroidManifest.xml to text XML. `--component` filters to one
@@ -194,7 +194,7 @@ clean (timing prints only with `-o`).
   (the defining image is reported).
 - **`ddc res <apk> [entry] [-o FILE]`** — without an entry: a directory
   summary of the archive with per-prefix entry counts (`res/drawable/
-  (1234)`), `--full` for the flat table (method, compressed size; XAPK
+  (1234)`), `--flat` for the flat table (method, compressed size; XAPK
   inner APKs flattened into `apk!name` labels), `--prefix` to expand a
   directory, plus `--depth/--sort/--limit/--offset`. With an entry: dumps
   it — binary XML (first chunk `0x0003`) decodes through the AXML
@@ -220,7 +220,7 @@ clean (timing prints only with `-o`).
   extends/implements belong to `ddc hierarchy`). The default view is a
   prefix frontier of the **owning classes** with per-package hit counts
   (which packages use this string?), drilling with `--prefix`/`--depth`;
-  `--full` prints every hit row: columnar with a header (`dex kind class
+  `--flat` prints every hit row: columnar with a header (`dex kind class
   method refs`), **one row per method**, multiple hits aggregate into
   `refs` (`; `-separated, deduped). `--sort`, `--limit` and `--offset`
   apply to either view. Match semantics: queries are case-insensitive
@@ -229,11 +229,11 @@ clean (timing prints only with `-o`).
   substring.
 - **`ddc callers <input> NAME [FQCN]`** — who invokes method NAME (the
   findrefs method machinery, scoped to one class optionally; accepts the
-  same `--full/--prefix/--depth/--sort/--limit/--offset` view flags).
+  same `--flat/--prefix/--depth/--sort/--limit/--offset` view flags).
 - **`ddc members <input> [NAME] [--class FQCN] [--fuzzy-class]
   [--method|--field]`** — method/field name search over the method and
   field id tables; `--method` / `--field` restrict the kind. The default
-  view groups matches by owning class/package with counts; `--full`
+  view groups matches by owning class/package with counts; `--flat`
   prints one row per member; `--format json` is available; the summary
   accepts `--prefix/--depth/--sort/--limit/--offset/--samples N`.
 
@@ -244,7 +244,7 @@ clean (timing prints only with `-o`).
   extends or implements it. Works across images (name-matched when the
   parent lives in another dex). The default view is a per-relation
   prefix frontier (`sub com.example/ (123)`), so a class with 150k
-  subtypes fits on one screen; `--full` prints every relation row,
+  subtypes fits on one screen; `--flat` prints every relation row,
   `--prefix/--depth/--sort/--limit/--offset` shape the view.
 - **`ddc largest <input> [-n N]`** — top-N methods by instruction count
   (find the monsters; default 20).

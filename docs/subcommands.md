@@ -16,22 +16,22 @@ stdout output is clean (stderr silent); timing prints only with `-o`.
 |---|---|---|
 | `ddc manifest <apk> [--component C]` | AndroidManifest.xml → text XML; `--component launcher\|activity\|service\|receiver\|provider\|permission\|activity-alias\|application` filters | **0.06s** |
 | `ddc info <input>` | app context (label via arsc, package, version, launcher, sdk, size, md5) + per-image dex counts | **0.11s** (md5 dominates on huge files) |
-| `ddc listclasses <input> [pattern]` | prefix frontier with counts (default); `--prefix/--depth` drill, `--limit/--offset` page, `--full` = flat names | **0.10s** |
+| `ddc listclasses <input> [pattern]` | prefix frontier with counts (default); `--prefix/--depth` drill, `--limit/--offset` page, `--flat` = flat names | **0.10s** |
 | `ddc getclass <input> FQCN [-o f]` | one class (+nested), targeted decompile | **0.03s** (typical class) |
 | `ddc findrefs <input> string TEXT` | every string-literal reference (const-string scan) | **0.14s** |
 | `ddc findrefs <input> type com.example.Foo` | type references (new-instance/check-cast/…) | ~0.5s |
 | `ddc findrefs <input> method onCreate --class android/app/Activity` | call sites | ~0.5s |
 | `ddc findrefs <input> field CREATOR --class com.example --fuzzy-class` | field read/write sites | ~0.5s |
 | `ddc strings <input> [-f TEXT] [--with-locations]` | string table; `--with-locations` maps hits to methods; `--summary` = reference sites per package; `--limit/--offset` page | **0.04s** |
-| `ddc members <input> [NAME] [--class FQCN] [--fuzzy-class] [--method\|--field]` | member search; default class/package frontier, `--full` = rows | **0.04s** |
-| `ddc hierarchy <input> FQCN` | lineage; default per-relation package frontier, `--full` = rows | **0.04s** |
+| `ddc members <input> [NAME] [--class FQCN] [--fuzzy-class] [--method\|--field]` | member search; default class/package frontier, `--flat` = rows | **0.04s** |
+| `ddc hierarchy <input> FQCN` | lineage; default per-relation package frontier, `--flat` = rows | **0.04s** |
 | `ddc largest <input> [-n N]` | top-N methods by instruction count | **0.06s** |
 | `ddc disasm <input> FQCN[.method]` | raw bytecode of a class/method (opcode + pc) | **0.04s** |
 | `ddc callers <input> NAME [FQCN]` | who invokes method NAME (findrefs machinery; same view/paging flags) | ~0.5s |
 | `ddc getmethod <input> FQCN.method` | decompile ONE method — all overloads, sliced out of the class, provenance header kept | **0.03s** |
 | `ddc pkg <input> com.example.foo [-o DIR] [-t N]` | whole-package decompile through the full pipeline (segment-boundary prefix: subpackages included); `--app` takes the package from the manifest | 0.165s (Telegram tgnet, 1561 classes) |
 | `ddc mainactivity <apk>` | package + MAIN/LAUNCHER activity from the manifest, verified against the dex images | **0.02s** |
-| `ddc res <apk> [entry] [-o FILE]` | directory summary of the archive (`--full` = flat entries, `--prefix` expands); dump one: binary XML decoded, text as-is, binary saved via `-o` | **0.01s** |
+| `ddc res <apk> [entry] [-o FILE]` | directory summary of the archive (`--flat` = flat entries, `--prefix` expands); dump one: binary XML decoded, text as-is, binary saved via `-o` | **0.01s** |
 | (full run, for contrast) `ddc app.apk -o out/` | all 98,348 classes | 5.45s / 1.28GB |
 
 ## Finding which dex holds a class

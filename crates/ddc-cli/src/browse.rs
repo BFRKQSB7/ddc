@@ -94,7 +94,8 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
     let mut format = crate::OutFormat::Auto;
     let mut offset = 0usize;
     let mut limit = 0usize;
-    let mut summary = false;
+    let mut summary_explicit = false;
+    let mut flat = false;
     let mut prefix: Option<String> = None;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
@@ -111,7 +112,8 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
                 i += 1;
             }
             "--with-locations" => with_loc = true,
-            "--summary" | "--tree" => summary = true,
+            "--summary" | "--tree" => summary_explicit = true,
+            "--flat" | "--full" => flat = true,
             "--prefix" => {
                 let v = args
                     .get(i + 1)
@@ -193,7 +195,9 @@ pub(crate) fn cmd_strings(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
-    if !summary && (prefix.is_some() || depth.is_some() || sort_count || samples > 0) {
+    // --flat 优先；未显式 --summary 时，摘要类参数仍视为误用。
+    let summary = summary_explicit && !flat;
+    if !summary_explicit && !flat && (prefix.is_some() || depth.is_some() || sort_count || samples > 0) {
         bail!(
             "{}",
             bi!(
@@ -375,8 +379,7 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
     let mut kind_want: Option<&str> = None; // method | field
     let mut format = crate::OutFormat::Auto;
     let mut prefix: Option<String> = None;
-    let mut full = false;
-    let mut summary_explicit = false;
+    let mut flat = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
     let mut samples = 0usize;
@@ -399,8 +402,8 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
                 format = crate::parse_format(&format_value(args, i)?)?;
                 i += 1;
             }
-            "--full" => full = true,
-            "--summary" | "--tree" => summary_explicit = true,
+            "--flat" | "--full" => flat = true,
+            "--summary" | "--tree" => {}
             "--prefix" => {
                 let v = args
                     .get(i + 1)
@@ -478,28 +481,11 @@ pub(crate) fn cmd_members(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
-    if full && summary_explicit {
-        bail!(
-            "{}",
-            bi!(
-                "--full and --summary are mutually exclusive",
-                "--full 与 --summary 互斥"
-            )
-        );
-    }
-    if full && (depth.is_some() || sort_count || samples > 0) {
-        bail!(
-            "{}",
-            bi!(
-                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
-                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
-            )
-        );
-    }
+    // --flat 优先：显式平铺时摘要类参数被忽略。
     let common = parse_common(&rest, "members")?;
     let name = common.rest.first().cloned();
     let rf = crate::resolve_format(format);
-    let summary = !full;
+    let summary = !flat;
 
     if summary {
         // 摘要只按 owner 类计数：不格式化任何成员字符串（2.5M 行扫描
@@ -668,8 +654,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut format = crate::OutFormat::Auto;
     let mut prefix: Option<String> = None;
-    let mut full = false;
-    let mut summary_explicit = false;
+    let mut flat = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
     let mut samples = 0usize;
@@ -693,8 +678,8 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
                 format = crate::parse_format(&format_value(args, i)?)?;
                 i += 1;
             }
-            "--full" => full = true,
-            "--summary" | "--tree" => summary_explicit = true,
+            "--flat" | "--full" => flat = true,
+            "--summary" | "--tree" => {}
             "--prefix" => {
                 let v = args
                     .get(i + 1)
@@ -761,24 +746,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
-    if full && summary_explicit {
-        bail!(
-            "{}",
-            bi!(
-                "--full and --summary are mutually exclusive",
-                "--full 与 --summary 互斥"
-            )
-        );
-    }
-    if full && (depth.is_some() || sort_count || samples > 0) {
-        bail!(
-            "{}",
-            bi!(
-                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
-                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
-            )
-        );
-    }
+    // --flat 优先：显式平铺时摘要类参数被忽略。
     let common = parse_common(&rest, "hierarchy")?;
     let target = common
         .rest
@@ -792,7 +760,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
         });
     }
     let rf = crate::resolve_format(format);
-    let summary = !full;
+    let summary = !flat;
 
     if summary {
         // 每个 relation 一棵前缀树；行顺序 = relation 固定序 + 路径字典序。
@@ -1376,7 +1344,7 @@ pub(crate) fn cmd_callers(args: &[String]) -> Result<()> {
                 i += 1;
             }
             // 透传给 findrefs 的视图/翻页开关。
-            "--full" | "--summary" | "--tree" | "--fuzzy-class" => {
+            "--flat" | "--full" | "--summary" | "--tree" | "--fuzzy-class" => {
                 extra.push(args[i].clone())
             }
             "--limit" | "--offset" | "--sort" | "--depth" | "--prefix" | "--format" => {
@@ -2059,7 +2027,7 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut out: Option<PathBuf> = None;
     let mut prefix: Option<String> = None;
-    let mut full = false;
+    let mut flat = false;
     let mut summary_explicit = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
@@ -2076,7 +2044,7 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
                 ));
                 i += 1;
             }
-            "--full" => full = true,
+            "--flat" | "--full" => flat = true,
             "--summary" | "--tree" => summary_explicit = true,
             "--prefix" => {
                 let v = args
@@ -2144,29 +2112,15 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
         }
         i += 1;
     }
-    if full && summary_explicit {
-        bail!(
-            "{}",
-            bi!(
-                "--full and --summary are mutually exclusive",
-                "--full 与 --summary 互斥"
-            )
-        );
-    }
-    if full && (depth.is_some() || sort_count || samples > 0) {
-        bail!(
-            "{}",
-            bi!(
-                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
-                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
-            )
-        );
-    }
+    // --flat 优先：显式平铺时摘要类参数被忽略。
     let common = parse_common(&rest, "res")?;
-    let entries = flatten_entries(&common.input)?;
+    let mut entries = flatten_entries(&common.input)?;
+    if let Some(p) = &prefix {
+        entries.retain(|e| crate::api::under_prefix(&e.name, p, '/'));
+    }
     let Some(want) = common.rest.first() else {
-        // 列表模式：默认目录摘要；--full 为旧的逐条表格（可翻页）。
-        if full {
+        // 列表模式：默认目录摘要；--flat 为逐条表格（可翻页）。
+        if flat {
             let rp = crate::api::window_rows(entries, offset, limit);
             println!(
                 "{:<8}  {:>9}  {}",
@@ -2200,15 +2154,7 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
             }
             return Ok(());
         }
-        let keys: Vec<String> = entries
-            .iter()
-            .filter(|e| {
-                prefix
-                    .as_deref()
-                    .is_none_or(|p| crate::api::under_prefix(&e.name, p, '/'))
-            })
-            .map(|e| e.name.clone())
-            .collect();
+        let keys: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
         let mut tree = crate::api::prefix_tree_sampled(
             keys.iter().map(|k| (k.as_str(), 1usize)),
             prefix.as_deref(),
@@ -2271,7 +2217,7 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
         }
         return Ok(());
     };
-    if full
+    if flat
         || summary_explicit
         || prefix.is_some()
         || depth.is_some()
@@ -2282,8 +2228,8 @@ pub(crate) fn cmd_res(args: &[String]) -> Result<()> {
         bail!(
             "{}",
             bi!(
-                "res: --full/--summary/--prefix/--depth/--sort/--limit/--offset apply to the list form only",
-                "res：--full/--summary/--prefix/--depth/--sort/--limit/--offset 仅适用于列表形式"
+                "res: --flat/--summary/--prefix/--depth/--sort/--limit/--offset apply to the list form only",
+                "res：--flat/--summary/--prefix/--depth/--sort/--limit/--offset 仅适用于列表形式"
             )
         );
     }

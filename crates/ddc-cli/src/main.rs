@@ -111,7 +111,7 @@ fn print_help_en() {
     println!();
     println!("  Overview:");
     println!("    info <input>                    app context + per-image counts");
-    println!("    listclasses <input> [pattern]   prefix tree with counts (--full = flat names)");
+    println!("    listclasses <input> [pattern]   prefix tree with counts (--flat = raw names)");
     println!("    manifest <apk> [--component C]  AndroidManifest.xml → text XML");
     println!("    mainactivity <apk>              package + launcher activity");
     println!("    res <apk> [entry] [-o FILE]     archive entries; dump one");
@@ -236,7 +236,7 @@ fn print_help_zh() {
     println!();
     println!("  概览：");
     println!("    info <输入>                     App 上下文 + 逐镜像计数");
-    println!("    listclasses <输入> [模式]       带计数的前缀目录（--full = 全量平铺）");
+    println!("    listclasses <输入> [模式]       带计数的前缀目录（--flat = 全量平铺）");
     println!("    manifest <apk> [--component C]  AndroidManifest.xml → 文本 XML");
     println!("    mainactivity <apk>              包名 + 启动 Activity");
     println!("    res <apk> [条目] [-o 文件]      归档条目清单；输出单个内容");
@@ -369,7 +369,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
     (
         "listclasses",
         SubHelp {
-            desc: "class structure as a prefix frontier with counts (--full: flat names)",
+            desc: "class structure as a prefix frontier with counts (--flat: raw names)",
             usage: "ddc listclasses <INPUT> [PATTERN] [options]",
             args: &[
                 ("PATTERN", "case-insensitive substring filter"),
@@ -377,12 +377,12 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 DEX_EN,
                 FMT_ROW_EN,
-                ("--full", "flat, unwindowed class names — the pre-0.1.32 behavior"),
+                ("--flat, --full", "flat raw class names; --full is an alias"),
                 ("--summary, --tree", "explicitly select the summary view (already the default)"),
-                ("--prefix P", "segment-exact scope (a.b matches a.b and a.b.*); expand a frontier row"),
-                ("--depth N", "with --summary: aggregate exactly N segments below the scope"),
-                ("--sort name|count", "with --summary: row order (count = biggest groups first)"),
-                ("--samples N", "with --summary: show up to N example class names per group"),
+                ("--prefix P", "segment-exact scope (a.b matches a.b and a.b.*); also filters the flat view"),
+                ("--depth N", "aggregate exactly N segments below the scope"),
+                ("--sort name|count", "row order (count = biggest groups first)"),
+                ("--samples N", "show up to N example class names per group"),
                 ("--limit N", "keep at most N rows/classes (0 = unlimited); JSON gains total/next_offset"),
                 ("--offset M", "skip M rows/classes — resume where the previous page stopped"),
             ],
@@ -391,7 +391,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("ddc listclasses app.apk --sort count", "biggest packages first"),
                 ("ddc listclasses app.apk --prefix com.example --depth 1", "children one level down"),
                 ("ddc listclasses app.apk | grep '/ ('", "just the package rows"),
-                ("ddc listclasses app.apk --full | wc -l", "flat listing: total class count"),
+                ("ddc listclasses app.apk --flat | wc -l", "flat listing: total class count"),
                 ("ddc listclasses app.apk --limit 20 --offset 40 --format json", "paged rows with next_offset"),
             ],
         },
@@ -440,17 +440,17 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             ],
             opts: &[
                 ("-o, --output FILE", "write the entry's raw bytes (binary XML stays binary; stdout decodes it)"),
-                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--flat, --full", "flat raw rows (default: compressed prefix frontier); --full is an alias"),
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
-                ("--samples N", "with summary: show up to N example leaf names per group"),
+                ("--samples N", "show up to N example leaf names per group"),
                 ("--limit N", "keep at most N rows (0 = unlimited)"),
                 ("--offset M", "skip M rows — resume where the previous page stopped"),
             ],
             examples: &[
                 ("ddc res app.apk", "directory summary of the archive"),
-                ("ddc res app.apk --full | head -40", "flat entry listing"),
+                ("ddc res app.apk --flat | head -40", "flat entry listing"),
                 ("ddc res app.apk --prefix res/drawable", "one directory's files"),
                 ("ddc res app.apk AndroidManifest.xml", "decode one entry (binary XML becomes text)"),
                 ("ddc res app.apk resources.arsc -o arsc.bin", "save one entry's raw bytes"),
@@ -498,7 +498,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-C, --class FQCN", "owner class for method/field queries (exact unless --fuzzy-class)"),
                 ("--fuzzy-class", "match the owner class fuzzily"),
-                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--flat, --full", "flat raw rows (default: compressed prefix frontier); --full is an alias"),
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
@@ -511,7 +511,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             ],
             examples: &[
                 ("ddc findrefs app.apk string api_key", "which packages use \"api_key\" (frontier with counts)"),
-                ("ddc findrefs app.apk string api_key --full", "every hit row"),
+                ("ddc findrefs app.apk string api_key --flat", "every hit row"),
                 ("ddc findrefs app.apk string http --sort count", "biggest referencing packages first"),
                 ("ddc findrefs app.apk class okhttp3.OkHttpClient", "code usage of the class (new/check-cast/instance-of)"),
                 ("ddc findrefs app.apk method onCreate --class android/app/Activity", "invoke sites of Activity.onCreate"),
@@ -529,7 +529,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("FQCN", "optional owner class, narrows the search"),
             ],
             opts: &[
-                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--flat, --full", "flat raw rows (default: compressed prefix frontier); --full is an alias"),
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
@@ -541,7 +541,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             ],
             examples: &[
                 ("ddc callers app.apk sendMessage", "which packages invoke sendMessage (frontier)"),
-                ("ddc callers app.apk sendMessage --full", "every call site row"),
+                ("ddc callers app.apk sendMessage --flat", "every call site row"),
                 ("ddc callers app.apk onCreate android/app/Activity", "scope the callee to one owner class"),
             ],
         },
@@ -559,7 +559,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("--fuzzy-class", "match the class fuzzily"),
                 ("--method", "methods only"),
                 ("--field", "fields only"),
-                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--flat, --full", "flat raw rows (default: compressed prefix frontier); --full is an alias"),
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
@@ -573,7 +573,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("ddc members app.apk", "member counts per class/package (frontier)"),
                 ("ddc members app.apk token", "methods/fields with \"token\" in the name"),
                 ("ddc members app.apk --class com.example.Foo", "every member of one class, summarized"),
-                ("ddc members app.apk --class com.example.Foo --full", "every member row"),
+                ("ddc members app.apk --class com.example.Foo --flat", "every member row"),
             ],
         },
     ),
@@ -586,7 +586,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
                 ("FQCN", "class name, dotted or slashed"),
             ],
             opts: &[
-                ("--full", "flat rows (default: compressed prefix frontier)"),
+                ("--flat, --full", "flat raw rows (default: compressed prefix frontier); --full is an alias"),
                 ("--prefix P", "segment-exact scope; expand a frontier row"),
                 ("--depth N", "aggregate exactly N segments below the scope"),
                 ("--sort name|count", "row order (count = biggest groups first)"),
@@ -599,7 +599,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             examples: &[
                 ("ddc hierarchy app.apk java.lang.Object", "subclasses by package (frontier with counts)"),
                 ("ddc hierarchy app.apk java.lang.Object --sort count", "biggest packages first"),
-                ("ddc hierarchy app.apk java.lang.Object --full", "every relation row"),
+                ("ddc hierarchy app.apk java.lang.Object --flat", "every relation row"),
                 ("ddc hierarchy app.apk androidx.fragment.app.FragmentActivity", "its supertypes and every subclass"),
             ],
         },
@@ -726,19 +726,19 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
     (
         "listclasses",
         SubHelp {
-            desc: "带计数的前缀目录视图（--full：全量平铺类名）",
+            desc: "带计数的前缀目录视图（--flat：全量平铺类名）",
             usage: "ddc listclasses <输入> [PATTERN] [选项]",
             args: &[
                 ("PATTERN", "大小写不敏感的子串过滤"),
             ],
             opts: &[
                 DEX_ZH,
-                ("--full", "全量平铺类名——0.1.32 之前的旧行为"),
+                ("--flat, --full", "全量平铺类名；--full 为别名"),
                 ("--summary, --tree", "显式选择摘要视图（本就是默认）"),
                 ("--prefix P", "段级精确范围（a.b 匹配 a.b 与 a.b.*），用于展开目录行"),
                 ("--depth N", "配合 --summary：在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "配合 --summary：行序（count = 大类优先）"),
-                ("--samples N", "配合 --summary：每个目录行附最多 N 个示例类名"),
+                ("--samples N", "每个目录行附最多 N 个示例类名"),
                 ("--limit N", "最多返回 N 行/类（0 = 不限）；JSON 附带 total/next_offset"),
                 ("--offset M", "跳过 M 行/类——从上一页结束处继续"),
             ],
@@ -747,7 +747,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("ddc listclasses app.apk --sort count", "最大的包优先"),
                 ("ddc listclasses app.apk --prefix com.example --depth 1", "下一级内容"),
                 ("ddc listclasses app.apk | grep '/ ('", "只保留目录行"),
-                ("ddc listclasses app.apk --full | wc -l", "平铺列表：类总数"),
+                ("ddc listclasses app.apk --flat | wc -l", "平铺列表：类总数"),
                 ("ddc listclasses app.apk --limit 20 --offset 40 --format json", "带 next_offset 的翻页"),
             ],
         },
@@ -795,17 +795,17 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             ],
             opts: &[
                 ("-o, --output FILE", "写入条目的原始字节（二进制 XML 保持原样；stdout 输出为解码文本）"),
-                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--flat, --full", "平铺原始行（默认：压缩前缀目录）；--full 为别名"),
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
-                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
+                ("--samples N", "每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
             ],
             examples: &[
                 ("ddc res app.apk", "归档目录摘要"),
-                ("ddc res app.apk --full | head -40", "平铺条目列表"),
+                ("ddc res app.apk --flat | head -40", "平铺条目列表"),
                 ("ddc res app.apk --prefix res/drawable", "单个目录的文件"),
                 ("ddc res app.apk AndroidManifest.xml", "输出单个条目（二进制 XML 解码为文本）"),
                 ("ddc res app.apk resources.arsc -o arsc.bin", "保存条目的原始字节"),
@@ -853,11 +853,11 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             opts: &[
                 ("-C, --class FQCN", "method/field 查询的所属类（默认精确，--fuzzy-class 改模糊）"),
                 ("--fuzzy-class", "所属类模糊匹配"),
-                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--flat, --full", "平铺原始行（默认：压缩前缀目录）；--full 为别名"),
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
-                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
+                ("--samples N", "每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 OUT_FILE_ZH,
@@ -866,7 +866,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             ],
             examples: &[
                 ("ddc findrefs app.apk string api_key", "哪些包在用 \"api_key\"（带计数的目录）"),
-                ("ddc findrefs app.apk string api_key --full", "全部命中行"),
+                ("ddc findrefs app.apk string api_key --flat", "全部命中行"),
                 ("ddc findrefs app.apk string http --sort count", "引用最多的包优先"),
                 ("ddc findrefs app.apk class okhttp3.OkHttpClient", "类在代码中的使用（new/check-cast/instance-of）"),
                 ("ddc findrefs app.apk method onCreate --class android/app/Activity", "Activity.onCreate 的调用点"),
@@ -884,11 +884,11 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("FQCN", "可选的所属类，用于缩小范围"),
             ],
             opts: &[
-                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--flat, --full", "平铺原始行（默认：压缩前缀目录）；--full 为别名"),
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
-                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
+                ("--samples N", "每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -896,7 +896,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             ],
             examples: &[
                 ("ddc callers app.apk sendMessage", "哪些包在调用 sendMessage（目录）"),
-                ("ddc callers app.apk sendMessage --full", "全部调用位点行"),
+                ("ddc callers app.apk sendMessage --flat", "全部调用位点行"),
                 ("ddc callers app.apk onCreate android/app/Activity", "把被调方法限定到一个所属类"),
             ],
         },
@@ -914,11 +914,11 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("--fuzzy-class", "所属类模糊匹配"),
                 ("--method", "仅方法"),
                 ("--field", "仅字段"),
-                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--flat, --full", "平铺原始行（默认：压缩前缀目录）；--full 为别名"),
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
-                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
+                ("--samples N", "每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -928,7 +928,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("ddc members app.apk", "按类/包统计成员数（目录）"),
                 ("ddc members app.apk token", "名字含 \"token\" 的方法/字段"),
                 ("ddc members app.apk --class com.example.Foo", "单个类的全部成员（摘要）"),
-                ("ddc members app.apk --class com.example.Foo --full", "单个类的全部成员行"),
+                ("ddc members app.apk --class com.example.Foo --flat", "单个类的全部成员行"),
                 ("ddc members app.apk onCreate --method", "只看方法名"),
             ],
         },
@@ -942,11 +942,11 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
                 ("FQCN", "类名，点分/斜杠均可"),
             ],
             opts: &[
-                ("--full", "平铺行（默认：压缩前缀目录）"),
+                ("--flat, --full", "平铺原始行（默认：压缩前缀目录）；--full 为别名"),
                 ("--prefix P", "段级精确范围，用于展开目录行"),
                 ("--depth N", "在范围下恰好 N 段处聚合"),
                 ("--sort name|count", "行序（count = 大类优先）"),
-                ("--samples N", "配合摘要：每个目录行附最多 N 个示例叶子名"),
+                ("--samples N", "每个目录行附最多 N 个示例叶子名"),
                 ("--limit N", "最多 N 行（0 = 不限）"),
                 ("--offset M", "跳过 M 行——从上一页结束处继续"),
                 DEX_ZH,
@@ -955,7 +955,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             examples: &[
                 ("ddc hierarchy app.apk java.lang.Object", "按包统计子类（带计数的目录）"),
                 ("ddc hierarchy app.apk java.lang.Object --sort count", "大包优先"),
-                ("ddc hierarchy app.apk java.lang.Object --full", "全部关系行"),
+                ("ddc hierarchy app.apk java.lang.Object --flat", "全部关系行"),
                 ("ddc hierarchy app.apk androidx.fragment.app.FragmentActivity", "其超类与全部子类"),
             ],
         },
@@ -1954,8 +1954,7 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
     let mut input: Option<PathBuf> = None;
     let mut pattern: Option<String> = None;
     let mut prefix: Option<String> = None;
-    let mut summary_explicit = false;
-    let mut full = false;
+    let mut flat = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
     let mut offset = 0usize;
@@ -1974,8 +1973,8 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
                 i += 1;
             }
             // 摘要视图是默认行为；--summary/--tree 显式写出也接受。
-            "--summary" | "--tree" => summary_explicit = true,
-            "--full" => full = true,
+            "--summary" | "--tree" => {}
+            "--flat" | "--full" => flat = true,
             "--prefix" => {
                 let v = args
                     .get(i + 1)
@@ -2068,25 +2067,9 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
         "listclasses needs an input file",
         "listclasses 需要输入文件"
     ))?;
-    if full && summary_explicit {
-        bail!(
-            "{}",
-            bi!(
-                "--full and --summary are mutually exclusive",
-                "--full 与 --summary 互斥"
-            )
-        );
-    }
-    if full && (depth.is_some() || sort_count || samples > 0) {
-        bail!(
-            "{}",
-            bi!(
-                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
-                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
-            )
-        );
-    }
-    let summary = !full;
+    // --flat 优先：显式要求平铺时，摘要类参数（--summary/--depth/--sort/
+    // --samples）一律忽略，而不是报错——调用方可以安全地传入一套通用参数。
+    let summary = !flat;
     let rf = resolve_format(format);
     if summary {
         // 摘要视图需要完整过滤集再建树；窗口作用在“行”上，不是类名上。
@@ -2651,8 +2634,7 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
     let mut out: Option<PathBuf> = None;
     let mut format = OutFormat::Auto;
     let mut prefix: Option<String> = None;
-    let mut full = false;
-    let mut summary_explicit = false;
+    let mut flat = false;
     let mut depth: Option<usize> = None;
     let mut sort_count = false;
     let mut offset = 0usize;
@@ -2677,8 +2659,8 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
                 i += 1;
             }
             "--fuzzy-class" => fuzzy_class = true,
-            "--full" => full = true,
-            "--summary" | "--tree" => summary_explicit = true,
+            "--flat" | "--full" => flat = true,
+            "--summary" | "--tree" => {}
             "--prefix" => {
                 let v = args
                     .get(i + 1)
@@ -2769,24 +2751,7 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
             )
         );
     }
-    if full && summary_explicit {
-        bail!(
-            "{}",
-            bi!(
-                "--full and --summary are mutually exclusive",
-                "--full 与 --summary 互斥"
-            )
-        );
-    }
-    if full && (depth.is_some() || sort_count || samples > 0) {
-        bail!(
-            "{}",
-            bi!(
-                "--depth/--sort/--samples only apply to the summary view (the default); drop --full",
-                "--depth/--sort/--samples 仅适用于摘要视图（默认）；请去掉 --full"
-            )
-        );
-    }
+    // --flat 优先：摘要类参数被忽略（见 listclasses 同款说明）。
     let input = PathBuf::from(&positionals[0]);
     let kind = positionals[1].clone();
     let value = positionals[2].clone();
@@ -2826,7 +2791,7 @@ fn cmd_findrefs(args: &[String], t0: std::time::Instant) -> Result<()> {
         hits.retain(|h| crate::api::under_prefix(&h.class.replace('/', "."), p, '.'));
     }
     let rf = resolve_format(format);
-    let summary = !full;
+    let summary = !flat;
 
     if summary {
         // 按 owner 类做前缀目录：一行 = 分叉包（命中数）或类（命中数）。

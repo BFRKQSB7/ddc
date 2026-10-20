@@ -98,7 +98,7 @@ ddc app.apk -o - | less              # 全部输出到 stdout
 ddc info app.apk                      # App 上下文（应用名、包名、版本、
                                       # md5）+ 每镜像计数
 ddc listclasses app.apk              # 带类数的包目录树
-                                      # （--full：全量平铺）
+                                      # （--flat：全量平铺）
 ddc mainactivity app.apk             # 入口：包名 + 启动 Activity
 ddc findrefs app.apk string token    # 每个 const-string "token" 引用点
 ddc getmethod app.apk Foo.toString   # 单方法，含全部重载

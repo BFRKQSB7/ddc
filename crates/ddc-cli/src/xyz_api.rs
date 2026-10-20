@@ -59,8 +59,8 @@ struct ListclassesArgs {
     pattern: String,
     #[xyz(desc = "segment-exact class prefix scope (a.b matches a.b and a.b.*)")]
     prefix: String,
-    #[xyz(desc = "flat full listing (default: compressed prefix frontier with counts)")]
-    full: bool,
+    #[xyz(desc = "flat raw rows (default: compressed prefix frontier with counts)")]
+    flat: bool,
     #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive frontier)")]
     depth: i64,
     #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
@@ -91,12 +91,7 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
-        return Err(errs::new(
-            errs::Kind::InvalidInput,
-            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
-        ));
-    }
+    // flat 优先：摘要类参数被忽略（不再报错）。
     let prefix = {
         let n = api::normalize_class_prefix(&a.prefix);
         if n.is_empty() { None } else { Some(n) }
@@ -104,7 +99,7 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
     let limit = a.limit as usize;
     let offset = a.offset as usize;
     // 摘要前缀目录是默认视图；full=true 恢复平铺全量列表。
-    if !a.full {
+    if !a.flat {
         let page = api::class_names(
             &p(&a.input),
             empty_or_some(&a.pattern),
@@ -224,7 +219,7 @@ struct FindRefsArgs {
     #[xyz(desc = "match the owner class fuzzily")]
     fuzzy_class: bool,
     #[xyz(desc = "flat hit rows (default: prefix frontier of owner classes)")]
-    full: bool,
+    flat: bool,
     #[xyz(desc = "segment-exact owner-class scope (a.b matches a.b and a.b.*)")]
     prefix: String,
     #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive)")]
@@ -254,12 +249,7 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
-        return Err(errs::new(
-            errs::Kind::InvalidInput,
-            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
-        ));
-    }
+    // flat 优先：摘要类参数被忽略（不再报错）。
     let prefix = {
         let n = api::normalize_class_prefix(&a.prefix);
         if n.is_empty() { None } else { Some(n) }
@@ -278,7 +268,7 @@ fn findrefs(_ctx: &Ctx, a: &FindRefsArgs) -> XyzResult<Vec<serde_json::Value>> {
     }
     let limit = a.limit as usize;
     let offset = a.offset as usize;
-    if !a.full {
+    if !a.flat {
         let keys: Vec<String> = rows.iter().map(|r| r.class.clone()).collect();
         let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
         let mut tree = api::prefix_tree_sampled(
@@ -345,6 +335,8 @@ struct StringsArgs {
     with_locations: bool,
     #[xyz(desc = "summarize matching reference sites by owning class/package")]
     summary: bool,
+    #[xyz(desc = "flat raw string rows (overrides summary)")]
+    flat: bool,
     #[xyz(desc = "with summary: segment-exact owner-class scope")]
     prefix: String,
     #[xyz(desc = "with summary: aggregate exactly N segments below the prefix (0 = adaptive)")]
@@ -378,14 +370,15 @@ fn strings(_ctx: &Ctx, a: &StringsArgs) -> XyzResult<Vec<serde_json::Value>> {
         let n = api::normalize_class_prefix(&a.prefix);
         if n.is_empty() { None } else { Some(n) }
     };
-    if !a.summary && (prefix.is_some() || a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
+    let summary = a.summary && !a.flat;
+    if !summary && !a.flat && (prefix.is_some() || a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
         return Err(errs::new(
             errs::Kind::InvalidInput,
             "prefix/depth/sort/samples only apply to summary=true".to_string(),
         ));
     }
     let offset = a.offset as usize;
-    if a.summary {
+    if summary {
         // 哪些包/类在引用匹配的字符串（引用位点计数）。
         let mut counts = api::string_owner_counts(&p(&a.input), empty_or_some(&a.filter), &a.dex)
             .map_err(map_err)?;
@@ -456,7 +449,7 @@ struct HierarchyArgs {
     #[xyz(desc = "class name, dotted or slashed", required)]
     class: String,
     #[xyz(desc = "flat relation rows (default: per-relation prefix frontier)")]
-    full: bool,
+    flat: bool,
     #[xyz(desc = "segment-exact scope on the result classes (a.b matches a.b and a.b.*)")]
     prefix: String,
     #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive)")]
@@ -486,12 +479,7 @@ fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>>
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
-    if a.full && (a.depth > 0 || !a.sort.is_empty() || a.samples > 0) {
-        return Err(errs::new(
-            errs::Kind::InvalidInput,
-            "depth/sort/samples only apply to the summary view (the default); drop full".to_string(),
-        ));
-    }
+    // flat 优先：摘要类参数被忽略（不再报错）。
     let prefix = {
         let n = api::normalize_class_prefix(&a.prefix);
         if n.is_empty() { None } else { Some(n) }
@@ -504,7 +492,7 @@ fn hierarchy(_ctx: &Ctx, a: &HierarchyArgs) -> XyzResult<Vec<serde_json::Value>>
     }
     let limit = a.limit as usize;
     let offset = a.offset as usize;
-    if !a.full {
+    if !a.flat {
         const ORDER: [&str; 5] = ["class", "extends", "implements", "sub", "impl"];
         let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
         let mut combined: Vec<(usize, String, api::TreeRow)> = Vec::new();
@@ -690,7 +678,7 @@ pub fn run(args: Vec<String>) -> i32 {
         .mcp(mcp_read())
         .also(&[
             &xyz_rust::define("ddc.listclasses", listclasses)
-                .summary("Class structure as a prefix frontier with counts (full=true: flat names)")
+                .summary("Class structure as a prefix frontier with counts (flat=true: raw names)")
                 .cli(skip_cli())
                 .http(http("/classes"))
                 .mcp(mcp_capped()),
@@ -705,7 +693,7 @@ pub fn run(args: Vec<String>) -> i32 {
                 .http(http("/method"))
                 .mcp(mcp_read()),
             &xyz_rust::define("ddc.findrefs", findrefs)
-                .summary("Cross-references; default owner-class frontier (full=true: hit rows)")
+                .summary("Cross-references; default owner-class frontier (flat=true: hit rows)")
                 .cli(skip_cli())
                 .http(http("/findrefs"))
                 .mcp(mcp_capped()),
@@ -715,7 +703,7 @@ pub fn run(args: Vec<String>) -> i32 {
                 .http(http("/strings"))
                 .mcp(mcp_capped()),
             &xyz_rust::define("ddc.hierarchy", hierarchy)
-                .summary("Super/subtypes; default per-relation frontier (full=true: rows)")
+                .summary("Super/subtypes; default per-relation frontier (flat=true: rows)")
                 .cli(skip_cli())
                 .http(http("/hierarchy"))
                 .mcp(mcp_capped()),
