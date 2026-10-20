@@ -232,16 +232,20 @@ pub fn class_names(
             }
         }
     }
+    // pattern 过滤必须作用在点分显示名上：输出是 a.a 形式，在内部
+    // 斜杠形式（a/a）上过滤会让任何带点的 pattern 永远匹配 0 结果。
+    let dotted: Vec<String> = all.into_iter().map(|n| n.replace('/', ".")).collect();
     let shown: Vec<String> = match pattern {
         Some(p) => {
             let lp = p.to_ascii_lowercase();
-            all.into_iter()
+            dotted
+                .into_iter()
                 .filter(|n| n.to_ascii_lowercase().contains(&lp))
                 .collect()
         }
-        None => all,
+        None => dotted,
     };
-    Ok(shown.into_iter().map(|n| n.replace('/', ".")).collect())
+    Ok(shown)
 }
 
 /// Decompile one class (nested classes included). Mirrors

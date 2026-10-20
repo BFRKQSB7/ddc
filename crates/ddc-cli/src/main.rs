@@ -1917,18 +1917,22 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
             }
         }
     }
+    // 同 api::class_names：过滤作用在点分显示名上——在内部斜杠形式
+    // （a/a）上过滤会让任何带点的 pattern 永远 0 命中（孪生实现须同步）。
+    let dotted: Vec<String> = all.into_iter().map(|n| n.replace('/', ".")).collect();
     let shown: Vec<String> = match &pattern {
         Some(p) => {
             let lp = p.to_ascii_lowercase();
-            all.into_iter()
+            dotted
+                .into_iter()
                 .filter(|n| n.to_ascii_lowercase().contains(&lp))
                 .collect()
         }
-        None => all,
+        None => dotted,
     };
     // stdout mode: names only — no trailing summary/timing noise.
     for name in &shown {
-        println!("{}", name.replace('/', "."));
+        println!("{}", name);
     }
     Ok(())
 }
