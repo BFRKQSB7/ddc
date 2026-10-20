@@ -57,12 +57,79 @@ struct ListclassesArgs {
     input: String,
     #[xyz(desc = "case-insensitive substring filter")]
     pattern: String,
+    #[xyz(desc = "segment-exact class prefix scope (a.b matches a.b and a.b.*)")]
+    prefix: String,
+    #[xyz(desc = "group into a compressed prefix frontier with class counts")]
+    summary: bool,
+    #[xyz(desc = "with summary: aggregate at exactly N segments below the prefix (0 = adaptive)")]
+    depth: i64,
+    #[xyz(desc = "with summary: row order", enum = "name,count")]
+    sort: String,
+    #[xyz(desc = "maximum rows to return (0 = unlimited)")]
+    limit: i64,
+    #[xyz(desc = "number of rows to skip")]
+    offset: i64,
     #[xyz(desc = "restrict images whose entry name contains this (repeatable)")]
     dex: Vec<String>,
 }
 
+/// One text line per row: package rows render as `path/ (classes)`, class
+/// leaves as the bare name (grep-friendly). The CLI adds a JSON envelope
+/// with totals; the REST/MCP channels currently return text rows only.
 fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
-    api::class_names(&p(&a.input), empty_or_some(&a.pattern), &a.dex).map_err(map_err)
+    if a.limit < 0 || a.offset < 0 || a.depth < 0 {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "limit/offset/depth must be non-negative".to_string(),
+        ));
+    }
+    if !a.sort.is_empty() && a.sort != "name" && a.sort != "count" {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            format!("sort must be name|count, got {:?}", a.sort),
+        ));
+    }
+    let prefix = {
+        let n = api::normalize_class_prefix(&a.prefix);
+        if n.is_empty() { None } else { Some(n) }
+    };
+    let limit = a.limit as usize;
+    let offset = a.offset as usize;
+    if a.summary {
+        let page = api::class_names(
+            &p(&a.input),
+            empty_or_some(&a.pattern),
+            prefix.as_deref(),
+            &a.dex,
+            0,
+            0,
+        )
+        .map_err(map_err)?;
+        let depth = if a.depth == 0 { None } else { Some(a.depth as usize) };
+        let mut rows = api::class_tree(&page.names, prefix.as_deref(), depth);
+        if a.sort == "count" {
+            rows.sort_by(|x, y| y.classes.cmp(&x.classes).then_with(|| x.path.cmp(&y.path)));
+        }
+        let rp = api::window_rows(rows, offset, limit);
+        return Ok(rp
+            .rows
+            .iter()
+            .map(|r| match r.kind {
+                api::TreeKind::Package => format!("{}/ ({})", r.path, r.classes),
+                api::TreeKind::Class => r.path.clone(),
+            })
+            .collect());
+    }
+    let page = api::class_names(
+        &p(&a.input),
+        empty_or_some(&a.pattern),
+        prefix.as_deref(),
+        &a.dex,
+        offset,
+        limit,
+    )
+    .map_err(map_err)?;
+    Ok(page.names)
 }
 
 fn empty_or_some(s: &str) -> Option<&str> {

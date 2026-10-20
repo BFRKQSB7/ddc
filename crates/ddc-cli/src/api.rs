@@ -186,13 +186,60 @@ pub fn info_report(input: &Path) -> Result<InfoReport> {
     Ok(report)
 }
 
+/// One row of the class-tree ("prefix frontier") view. `kind` tells a
+/// package group from a class leaf — Java allows a class and a package to
+/// share a name, in which case both rows appear.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeKind {
+    Class,
+    Package,
+}
+
+#[derive(Debug, Clone)]
+pub struct TreeRow {
+    pub path: String,
+    pub kind: TreeKind,
+    /// Classes in this subtree (1 for a class leaf).
+    pub classes: usize,
+}
+
+/// A page of class names plus the pre-window match count.
+pub struct ClassPage {
+    pub names: Vec<String>,
+    pub total: usize,
+}
+
+/// Normalize a user prefix: dotted or slashed, trailing separators
+/// stripped. Empty means "the root".
+pub fn normalize_class_prefix(p: &str) -> String {
+    p.trim()
+        .replace('/', ".")
+        .trim_end_matches('.')
+        .to_string()
+}
+
+/// Segment-exact prefix match: `a.b` matches `a.b` and `a.b.*`, never
+/// `a.bc`.
+fn class_under_prefix(name: &str, prefix: &str) -> bool {
+    name == prefix
+        || (name.len() > prefix.len()
+            && name.starts_with(prefix)
+            && name.as_bytes()[prefix.len()] == b'.')
+}
+
 /// Class names, dotted form, deduped in pool order; `pattern` is a
-/// case-insensitive substring filter.
+/// case-insensitive substring filter, `prefix` a segment-exact scope,
+/// and `(offset, limit)` a window over the filtered set (`limit == 0`
+/// means unlimited). The order is the first-appearance order over dex
+/// images in input order, so windows are stable across runs.
 pub fn class_names(
     input: &Path,
     pattern: Option<&str>,
+    prefix: Option<&str>,
     dex_filters: &[String],
-) -> Result<Vec<String>> {
+    offset: usize,
+    limit: usize,
+) -> Result<ClassPage> {
     let files = expand_inputs(&[input.to_path_buf()])?;
     let images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
     let handles: Vec<_> = images
@@ -235,7 +282,7 @@ pub fn class_names(
     // pattern 过滤必须作用在点分显示名上：输出是 a.a 形式，在内部
     // 斜杠形式（a/a）上过滤会让任何带点的 pattern 永远匹配 0 结果。
     let dotted: Vec<String> = all.into_iter().map(|n| n.replace('/', ".")).collect();
-    let shown: Vec<String> = match pattern {
+    let matched: Vec<String> = match pattern {
         Some(p) => {
             let lp = p.to_ascii_lowercase();
             dotted
@@ -245,7 +292,172 @@ pub fn class_names(
         }
         None => dotted,
     };
-    Ok(shown)
+    let matched: Vec<String> = match prefix {
+        Some(p) => matched
+            .into_iter()
+            .filter(|n| class_under_prefix(n, p))
+            .collect(),
+        None => matched,
+    };
+    let total = matched.len();
+    let names = if limit == 0 {
+        matched.into_iter().skip(offset).collect()
+    } else {
+        matched.into_iter().skip(offset).take(limit).collect()
+    };
+    Ok(ClassPage { names, total })
+}
+
+struct TrieNode {
+    children: std::collections::BTreeMap<String, TrieNode>,
+    leaf: bool,
+    count: usize,
+}
+
+impl TrieNode {
+    fn new() -> Self {
+        TrieNode {
+            children: std::collections::BTreeMap::new(),
+            leaf: false,
+            count: 0,
+        }
+    }
+}
+
+/// Build the compressed prefix frontier of `names` (already filtered).
+///
+/// Adaptive mode (`depth == None`) collapses single-child chains and
+/// stops at branching points, so every row is either a class leaf or a
+/// package group whose `classes` count is what drilling there would
+/// yield. `depth == Some(n)` instead aggregates at exactly `n` segments
+/// below the scope (classes that terminate earlier still appear).
+/// Rows come out in segment-lexicographic order (deterministic).
+pub fn class_tree(names: &[String], prefix: Option<&str>, depth: Option<usize>) -> Vec<TreeRow> {
+    let mut root = TrieNode::new();
+    for name in names {
+        let mut n = &mut root;
+        n.count += 1;
+        for seg in name.split('.') {
+            n = n.children.entry(seg.to_string()).or_insert_with(TrieNode::new);
+            n.count += 1;
+        }
+        n.leaf = true;
+    }
+    let scope_path = prefix.unwrap_or("");
+    let mut scope = &root;
+    if !scope_path.is_empty() {
+        for seg in scope_path.split('.') {
+            match scope.children.get(seg) {
+                Some(n) => scope = n,
+                None => return Vec::new(),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if !scope_path.is_empty() && scope.leaf {
+        out.push(TreeRow {
+            path: scope_path.to_string(),
+            kind: TreeKind::Class,
+            classes: 1,
+        });
+    }
+    for (seg, child) in &scope.children {
+        let path = if scope_path.is_empty() {
+            seg.clone()
+        } else {
+            format!("{scope_path}.{seg}")
+        };
+        match depth {
+            None => emit_adaptive(child, path, &mut out),
+            Some(target) => emit_fixed(child, path, 1, target, &mut out),
+        }
+    }
+    out
+}
+
+fn emit_adaptive(node: &TrieNode, path: String, out: &mut Vec<TreeRow>) {
+    let mut path = path;
+    let mut node = node;
+    loop {
+        if node.leaf {
+            out.push(TreeRow {
+                path: path.clone(),
+                kind: TreeKind::Class,
+                classes: 1,
+            });
+        }
+        if node.children.is_empty() {
+            return;
+        }
+        if node.children.len() == 1 {
+            let (seg, child) = node.children.iter().next().expect("len == 1");
+            path.push('.');
+            path.push_str(seg);
+            node = child;
+            continue;
+        }
+        out.push(TreeRow {
+            path,
+            kind: TreeKind::Package,
+            classes: node.count,
+        });
+        return;
+    }
+}
+
+fn emit_fixed(node: &TrieNode, path: String, level: usize, target: usize, out: &mut Vec<TreeRow>) {
+    if node.leaf {
+        out.push(TreeRow {
+            path: path.clone(),
+            kind: TreeKind::Class,
+            classes: 1,
+        });
+    }
+    if node.children.is_empty() {
+        return;
+    }
+    if level == target {
+        out.push(TreeRow {
+            path,
+            kind: TreeKind::Package,
+            classes: node.count,
+        });
+        return;
+    }
+    for (seg, child) in &node.children {
+        let mut p = path.clone();
+        p.push('.');
+        p.push_str(seg);
+        emit_fixed(child, p, level + 1, target, out);
+    }
+}
+
+/// Window over a row list: the page plus the metadata a client needs to
+/// resume. `limit == 0` means unlimited.
+pub struct RowPage<T> {
+    pub rows: Vec<T>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub next_offset: Option<usize>,
+}
+
+pub fn window_rows<T>(rows: Vec<T>, offset: usize, limit: usize) -> RowPage<T> {
+    let total = rows.len();
+    let rows: Vec<T> = if limit == 0 {
+        rows.into_iter().skip(offset).collect()
+    } else {
+        rows.into_iter().skip(offset).take(limit).collect()
+    };
+    let end = offset.saturating_add(rows.len());
+    let next_offset = if end < total { Some(end) } else { None };
+    RowPage {
+        rows,
+        total,
+        offset,
+        limit,
+        next_offset,
+    }
 }
 
 /// Decompile one class (nested classes included). Mirrors
@@ -663,4 +875,93 @@ pub fn ref_rows(
 #[allow(dead_code)]
 fn _positional_output_probe(a: &Path, b: &Path) -> bool {
     is_dex_ext(a) || (a.exists() && !a.is_dir()) || (a.is_dir() && dir_has_dex_files(b))
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn render(rows: &[TreeRow]) -> Vec<String> {
+        rows.iter()
+            .map(|r| match r.kind {
+                TreeKind::Package => format!("{}/ ({})", r.path, r.classes),
+                TreeKind::Class => r.path.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn adaptive_frontier_groups_common_prefixes() {
+        // The example from the design discussion: the branching nodes a.b
+        // and q become package rows (transitive counts), the rest are leaves.
+        let n = names(&[
+            "a.b.c1", "a.b.c2", "a.b.c3", "q.m.a", "q.n.a", "x", "y", "z",
+        ]);
+        let rows = class_tree(&n, None, None);
+        assert_eq!(
+            render(&rows),
+            vec!["a.b/ (3)", "q/ (2)", "x", "y", "z"]
+        );
+    }
+
+    #[test]
+    fn fixed_depth_aggregates_at_the_requested_level() {
+        let n = names(&[
+            "a.b.c1", "a.b.c2", "a.b.c3", "q.m.a", "q.n.a", "x", "y", "z",
+        ]);
+        // depth 1 = one segment below the scope: a and q become groups;
+        // root leaves stay leaves (they cannot be descended).
+        let rows = class_tree(&n, None, Some(1));
+        assert_eq!(render(&rows), vec!["a/ (3)", "q/ (2)", "x", "y", "z"]);
+    }
+
+    #[test]
+    fn prefix_scopes_the_view() {
+        let n = names(&["a.b.c1", "a.b.c2", "a.b.c3", "q.m.a"]);
+        let rows = class_tree(&n, Some("a.b"), None);
+        assert_eq!(render(&rows), vec!["a.b.c1", "a.b.c2", "a.b.c3"]);
+        // A prefix with no matches yields nothing.
+        assert!(class_tree(&n, Some("nope"), None).is_empty());
+    }
+
+    #[test]
+    fn class_and_package_sharing_a_name_both_appear() {
+        let n = names(&["a.b", "a.b.c"]);
+        let rows = class_tree(&n, None, None);
+        assert_eq!(render(&rows), vec!["a.b", "a.b.c"]);
+        // Within the a.b scope the class itself is a row plus its child.
+        let rows = class_tree(&n, Some("a.b"), None);
+        assert_eq!(render(&rows), vec!["a.b", "a.b.c"]);
+    }
+
+    #[test]
+    fn normalize_prefix_accepts_both_separators() {
+        assert_eq!(normalize_class_prefix("com/example/"), "com.example");
+        assert_eq!(normalize_class_prefix(" com.example. "), "com.example");
+        assert_eq!(normalize_class_prefix(""), "");
+    }
+
+    #[test]
+    fn window_rows_reports_resume_metadata() {
+        let rows: Vec<u32> = (0..10).collect();
+        let p = window_rows(rows, 4, 3);
+        assert_eq!(p.rows, vec![4, 5, 6]);
+        assert_eq!(p.total, 10);
+        assert_eq!(p.next_offset, Some(7));
+        let p = window_rows((0..10).collect(), 8, 3);
+        assert_eq!(p.rows, vec![8, 9]);
+        assert_eq!(p.next_offset, None);
+        // Past the end: empty page, no next.
+        let p = window_rows((0..10).collect(), 20, 3);
+        assert!(p.rows.is_empty());
+        assert_eq!(p.next_offset, None);
+        // limit 0 = unlimited.
+        let p = window_rows((0..10).collect(), 7, 0);
+        assert_eq!(p.rows, vec![7, 8, 9]);
+        assert_eq!(p.next_offset, None);
+    }
 }

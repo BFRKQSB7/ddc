@@ -13,7 +13,7 @@
 | `ddc findrefs app.apk type com.example.Foo` | 类型引用（new-instance/check-cast 等） | ~0.5s |
 | `ddc findrefs app.apk method onCreate --class android/app/Activity` | 方法调用点 | ~0.5s |
 | `ddc findrefs app.apk field CREATOR --class com.example --fuzzy-class` | 字段读写点 | ~0.5s |
-| `ddc listclasses app.apk [pattern]` | 类名清单，可模糊过滤 | **0.10s** |
+| `ddc listclasses app.apk [pattern]` | 类名清单；`--summary` = 带计数的前缀目录，`--prefix/--depth` 钻取，`--limit/--offset` 翻页 | **0.10s** |
 | `ddc info app.apk` | App 上下文（arsc 解析应用名、包名、版本、启动类、SDK、大小、md5）+ 每镜像 dex 计数 | **0.11s**（大文件的 md5 占大头） |
 | `ddc getclass app.apk com.example.Foo [-o F.java]` | 单类（含嵌套）定点反编译 | **0.03s**（典型类） |
 | `ddc strings app.apk [-f TEXT] [--with-locations]` | 字符串表清单；`--with-locations` 把 const-string 命中映射到所属方法 | **0.04s** |

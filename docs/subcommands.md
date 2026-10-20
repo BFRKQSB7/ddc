@@ -16,7 +16,7 @@ stdout output is clean (stderr silent); timing prints only with `-o`.
 |---|---|---|
 | `ddc manifest <apk> [--component C]` | AndroidManifest.xml → text XML; `--component launcher\|activity\|service\|receiver\|provider\|permission\|activity-alias\|application` filters | **0.06s** |
 | `ddc info <input>` | app context (label via arsc, package, version, launcher, sdk, size, md5) + per-image dex counts | **0.11s** (md5 dominates on huge files) |
-| `ddc listclasses <input> [pattern]` | class names, optional fuzzy filter | **0.10s** |
+| `ddc listclasses <input> [pattern]` | class names; `--summary` = prefix frontier with counts, `--prefix/--depth` drill, `--limit/--offset` page | **0.10s** |
 | `ddc getclass <input> FQCN [-o f]` | one class (+nested), targeted decompile | **0.03s** (typical class) |
 | `ddc findrefs <input> string TEXT` | every string-literal reference (const-string scan) | **0.14s** |
 | `ddc findrefs <input> type com.example.Foo` | type references (new-instance/check-cast/…) | ~0.5s |

@@ -111,7 +111,7 @@ fn print_help_en() {
     println!();
     println!("  Overview:");
     println!("    info <input>                    app context + per-image counts");
-    println!("    listclasses <input> [pattern]   class names, fuzzy filter");
+    println!("    listclasses <input> [pattern]   class names, fuzzy filter; --summary = prefix tree");
     println!("    manifest <apk> [--component C]  AndroidManifest.xml → text XML");
     println!("    mainactivity <apk>              package + launcher activity");
     println!("    res <apk> [entry] [-o FILE]     archive entries; dump one");
@@ -236,7 +236,7 @@ fn print_help_zh() {
     println!();
     println!("  概览：");
     println!("    info <输入>                     App 上下文 + 逐镜像计数");
-    println!("    listclasses <输入> [模式]       类名清单，可模糊过滤");
+    println!("    listclasses <输入> [模式]       类名清单，可模糊过滤；--summary = 前缀目录");
     println!("    manifest <apk> [--component C]  AndroidManifest.xml → 文本 XML");
     println!("    mainactivity <apk>              包名 + 启动 Activity");
     println!("    res <apk> [条目] [-o 文件]      归档条目清单；输出单个内容");
@@ -369,7 +369,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
     (
         "listclasses",
         SubHelp {
-            desc: "list class names, optionally filtered",
+            desc: "list class names — flat, or as a prefix frontier with counts",
             usage: "ddc listclasses <INPUT> [PATTERN] [options]",
             args: &[
                 ("PATTERN", "case-insensitive substring filter"),
@@ -377,10 +377,20 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             opts: &[
                 DEX_EN,
                 FMT_ROW_EN,
+                ("--summary, --tree", "compressed prefix frontier: `pkg/ (classes)` rows + class leaves"),
+                ("--prefix P", "segment-exact scope (a.b matches a.b and a.b.*); expand a frontier row"),
+                ("--depth N", "with --summary: aggregate exactly N segments below the scope"),
+                ("--sort name|count", "with --summary: row order (count = biggest groups first)"),
+                ("--limit N", "keep at most N rows/classes (0 = unlimited); JSON gains total/next_offset"),
+                ("--offset M", "skip M rows/classes — resume where the previous page stopped"),
             ],
             examples: &[
                 ("ddc listclasses app.apk | wc -l", "total class count"),
                 ("ddc listclasses app.apk serializer", "case-insensitive substring filter"),
+                ("ddc listclasses app.apk --summary", "one screen of structure instead of 200k lines"),
+                ("ddc listclasses app.apk --summary --sort count", "biggest packages first"),
+                ("ddc listclasses app.apk --prefix com.example --depth 1", "children one level down"),
+                ("ddc listclasses app.apk --summary --limit 20 --offset 40 --format json", "paged rows with next_offset"),
             ],
         },
     ),
@@ -658,17 +668,27 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
     (
         "listclasses",
         SubHelp {
-            desc: "列出类名，可按模式过滤",
+            desc: "列出类名——平铺，或带计数的前缀目录视图",
             usage: "ddc listclasses <输入> [PATTERN] [选项]",
             args: &[
                 ("PATTERN", "大小写不敏感的子串过滤"),
             ],
             opts: &[
                 DEX_ZH,
+                ("--summary, --tree", "压缩前缀目录视图：`包/ (类数)` 行 + 类叶子"),
+                ("--prefix P", "段级精确范围（a.b 匹配 a.b 与 a.b.*），用于展开目录行"),
+                ("--depth N", "配合 --summary：在范围下恰好 N 段处聚合"),
+                ("--sort name|count", "配合 --summary：行序（count = 大类优先）"),
+                ("--limit N", "最多返回 N 行/类（0 = 不限）；JSON 附带 total/next_offset"),
+                ("--offset M", "跳过 M 行/类——从上一页结束处继续"),
             ],
             examples: &[
                 ("ddc listclasses app.apk | wc -l", "类总数"),
                 ("ddc listclasses app.apk serializer", "大小写不敏感的子串过滤"),
+                ("ddc listclasses app.apk --summary", "一屏看结构，而不是 20 万行"),
+                ("ddc listclasses app.apk --summary --sort count", "最大的包优先"),
+                ("ddc listclasses app.apk --prefix com.example --depth 1", "下一级内容"),
+                ("ddc listclasses app.apk --summary --limit 20 --offset 40 --format json", "带 next_offset 的翻页"),
             ],
         },
     ),
@@ -1816,6 +1836,12 @@ fn cmd_info(args: &[String], _t0: std::time::Instant) -> Result<()> {
 fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
     let mut input: Option<PathBuf> = None;
     let mut pattern: Option<String> = None;
+    let mut prefix: Option<String> = None;
+    let mut summary = false;
+    let mut depth: Option<usize> = None;
+    let mut sort_count = false;
+    let mut offset = 0usize;
+    let mut limit = 0usize;
     let mut dex_filters: Vec<String> = Vec::new();
     let mut format = OutFormat::Auto;
     let mut i = 0;
@@ -1826,6 +1852,61 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
                     args.get(i + 1)
                         .context(bi!("--format needs a value", "--format 需要一个值"))?,
                 )?;
+                i += 1;
+            }
+            "--summary" | "--tree" => summary = true,
+            "--prefix" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--prefix needs a value", "--prefix 需要一个值"))?;
+                let norm = crate::api::normalize_class_prefix(v);
+                prefix = if norm.is_empty() { None } else { Some(norm) };
+                i += 1;
+            }
+            "--depth" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--depth needs a count", "--depth 需要一个层数"))?;
+                let d: usize = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "--depth expects a positive integer, got {0:?}",
+                            "--depth 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if d == 0 {
+                    bail!("{}", bi!("--depth must be at least 1", "--depth 至少为 1"));
+                }
+                depth = Some(d);
+                i += 1;
+            }
+            "--sort" => {
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--sort needs a value", "--sort 需要一个值"))?;
+                match v.as_str() {
+                    "name" => sort_count = false,
+                    "count" => sort_count = true,
+                    other => bail!(
+                        "{}",
+                        bif!(
+                            "--sort expects name|count, got {0:?}",
+                            "--sort 需要 name|count，收到 {0:?}";
+                            other
+                        )
+                    ),
+                }
+                i += 1;
+            }
+            "--limit" => {
+                limit = parse_count(args.get(i + 1), "--limit")?;
+                i += 1;
+            }
+            "--offset" => {
+                offset = parse_count(args.get(i + 1), "--offset")?;
                 i += 1;
             }
             "-d" | "--dex" => {
@@ -1862,79 +1943,160 @@ fn cmd_listclasses(args: &[String], _t0: std::time::Instant) -> Result<()> {
         "listclasses needs an input file",
         "listclasses 需要输入文件"
     ))?;
-    if format != OutFormat::Text {
-        let names = crate::api::class_names(&input, pattern.as_deref(), &dex_filters)?;
-        let rf = resolve_format(format);
-        if rf != ResolvedFormat::Text {
-            return print_report(rf, &names);
+    let rf = resolve_format(format);
+    if summary {
+        // 摘要视图需要完整过滤集再建树；窗口作用在“行”上，不是类名上。
+        let page = crate::api::class_names(
+            &input,
+            pattern.as_deref(),
+            prefix.as_deref(),
+            &dex_filters,
+            0,
+            0,
+        )?;
+        let scope_classes = page.names.len();
+        let mut rows = crate::api::class_tree(&page.names, prefix.as_deref(), depth);
+        if sort_count {
+            rows.sort_by(|a, b| b.classes.cmp(&a.classes).then_with(|| a.path.cmp(&b.path)));
         }
-    }
-    // Class names need only each image's class_defs → type_ids → the
-    // class-name STRING ENTRIES: prefix decoding straight off the inflated
-    // bytes (a full DexFile::parse decodes the whole string table — the
-    // names are a small slice of it).
-    let files = expand_inputs(&[input])?;
-    let images = filter_images_by_dex(collect_images(&files)?, &dex_filters)?;
-    let mut _total = 0usize;
-    let mut all: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let handles: Vec<_> = images
-        .into_iter()
-        .map(|img| {
-            std::thread::spawn(move || {
-                let raw = match img.method {
-                    ZipMethod::Stored => img.data.bytes()[img.range].to_vec(),
-                    ZipMethod::Deflate => {
-                        // Stream and STOP at the class-name working set
-                        // (id tables + string data): the code section —
-                        // most of the bytes — is never inflated.
-                        inputs::inflate_until(img.data.bytes(), img.range.clone(), |out| {
-                            match inputs::scan_prefix_needed(out) {
-                                None => inputs::PrefixStep::Continue(0),
-                                Some(needed) => {
-                                    if out.len() >= needed {
-                                        inputs::PrefixStep::Abort
-                                    } else {
-                                        inputs::PrefixStep::Continue(needed - out.len())
-                                    }
-                                }
-                            }
-                        })
-                        .unwrap_or_default()
-                    }
-                };
-                DexFile::class_names_from_image(&raw)
-            })
-        })
-        .collect();
-    for h in handles {
-        if let Ok(names) = h.join() {
-            _total += names.len();
-            for name in names {
-                if seen.insert(name.clone()) {
-                    all.push(name);
-                }
+        let rp = crate::api::window_rows(rows, offset, limit);
+        if rf == ResolvedFormat::Jsonl {
+            for row in &rp.rows {
+                let v = serde_json::json!({
+                    "path": row.path,
+                    "kind": match row.kind {
+                        crate::api::TreeKind::Class => "class",
+                        crate::api::TreeKind::Package => "package",
+                    },
+                    "classes": row.classes,
+                });
+                println!("{}", serde_json::to_string(&v)?);
+            }
+            return Ok(());
+        }
+        if rf != ResolvedFormat::Text {
+            let rows_json: Vec<serde_json::Value> = rp
+                .rows
+                .iter()
+                .map(|row| {
+                    serde_json::json!({
+                        "path": row.path,
+                        "kind": match row.kind {
+                            crate::api::TreeKind::Class => "class",
+                            crate::api::TreeKind::Package => "package",
+                        },
+                        "classes": row.classes,
+                    })
+                })
+                .collect();
+            let v = serde_json::json!({
+                "view": "tree",
+                "prefix": prefix.unwrap_or_default(),
+                "depth": depth,
+                "classes": scope_classes,
+                "total": rp.total,
+                "offset": rp.offset,
+                "limit": rp.limit,
+                "returned": rp.rows.len(),
+                "next_offset": rp.next_offset,
+                "rows": rows_json,
+            });
+            return print_report(rf, &v);
+        }
+        for row in &rp.rows {
+            match row.kind {
+                crate::api::TreeKind::Package => println!("{}/ ({})", row.path, row.classes),
+                crate::api::TreeKind::Class => println!("{}", row.path),
             }
         }
-    }
-    // 同 api::class_names：过滤作用在点分显示名上——在内部斜杠形式
-    // （a/a）上过滤会让任何带点的 pattern 永远 0 命中（孪生实现须同步）。
-    let dotted: Vec<String> = all.into_iter().map(|n| n.replace('/', ".")).collect();
-    let shown: Vec<String> = match &pattern {
-        Some(p) => {
-            let lp = p.to_ascii_lowercase();
-            dotted
-                .into_iter()
-                .filter(|n| n.to_ascii_lowercase().contains(&lp))
-                .collect()
+        if limit != 0 || offset != 0 {
+            eprintln!(
+                "{}",
+                bif!(
+                    "ddc: showing {0} of {1} rows (offset {2}{3})",
+                    "ddc：显示 {0}/{1} 行（偏移 {2}{3}）";
+                    rp.rows.len(),
+                    rp.total,
+                    rp.offset,
+                    match rp.next_offset {
+                        Some(n) => format!(", next_offset {n}"),
+                        None => String::new(),
+                    }
+                )
+            );
         }
-        None => dotted,
-    };
-    // stdout mode: names only — no trailing summary/timing noise.
-    for name in &shown {
+        return Ok(());
+    }
+    // 平铺视图：窗口作用在类名上。无窗口参数时输出与旧版逐字节一致。
+    let page = crate::api::class_names(
+        &input,
+        pattern.as_deref(),
+        prefix.as_deref(),
+        &dex_filters,
+        offset,
+        limit,
+    )?;
+    if rf == ResolvedFormat::Jsonl {
+        return print_report(rf, &page.names);
+    }
+    if rf != ResolvedFormat::Text {
+        if limit != 0 || offset != 0 {
+            let end = offset.saturating_add(page.names.len());
+            let next = if end < page.total { Some(end) } else { None };
+            let v = serde_json::json!({
+                "total": page.total,
+                "offset": offset,
+                "limit": limit,
+                "returned": page.names.len(),
+                "next_offset": next,
+                "data": page.names,
+            });
+            return print_report(rf, &v);
+        }
+        return print_report(rf, &page.names);
+    }
+    for name in &page.names {
         println!("{}", name);
     }
+    if limit != 0 || offset != 0 {
+        let end = offset.saturating_add(page.names.len());
+        let next = if end < page.total { Some(end) } else { None };
+        eprintln!(
+            "{}",
+            bif!(
+                "ddc: showing {0} of {1} classes (offset {2}{3})",
+                "ddc：显示 {0}/{1} 个类（偏移 {2}{3}）";
+                page.names.len(),
+                page.total,
+                offset,
+                match next {
+                    Some(n) => format!(", next_offset {n}"),
+                    None => String::new(),
+                }
+            )
+        );
+    }
     Ok(())
+}
+
+/// `--limit` / `--offset` values: non-negative integers (`0` = unlimited
+/// for `--limit`). Rejects negatives with a usage hint instead of
+/// silently clamping.
+fn parse_count(v: Option<&String>, flag: &str) -> Result<usize> {
+    let v = v.with_context(|| {
+        bif!("{0} needs a value", "{0} 需要一个值"; flag)
+    })?;
+    v.parse::<usize>().map_err(|_| {
+        anyhow::anyhow!(
+            "{}",
+            bif!(
+                "{0} expects a non-negative integer, got {1:?}",
+                "{0} 需要非负整数，收到 {1:?}";
+                flag,
+                v
+            )
+        )
+    })
 }
 
 // ---- getclass ---------------------------------------------------------------
