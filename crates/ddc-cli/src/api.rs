@@ -620,36 +620,38 @@ pub fn string_scan_window(
             return;
         };
         let needle = filter.map(str::as_bytes);
-        let matched: std::collections::BTreeMap<u32, ()> = (0..dex.str_n as u32)
-            .filter(|&idx| {
-                let Some(bytes) = dex.string_bytes(idx) else {
-                    return false;
-                };
-                match needle {
-                    Some(f) => bytes.len() >= f.len() && bytes.windows(f.len()).any(|w| w == f),
-                    None => true,
-                }
-            })
-            .map(|idx| (idx, ()))
-            .collect();
-        let count = matched.len();
-        // 本映像内与全局窗口的交集。
+        // 单遍扫描字符串表：只保留窗口内的索引（不再为全表建 1.2M 项
+        // BTreeMap——窗口查询的成本降到纯 memmem）。
         let local_lo = offset.saturating_sub(base);
         let local_hi = if limit == 0 {
             usize::MAX
         } else {
             offset.saturating_add(limit).saturating_sub(base)
         };
-        let in_window = local_lo < count && local_lo < local_hi;
+        let mut window_idxs: Vec<u32> = Vec::new();
+        let mut count = 0usize;
+        for idx in 0..dex.str_n as u32 {
+            let Some(bytes) = dex.string_bytes(idx) else {
+                continue;
+            };
+            let hit = match needle {
+                Some(f) => bytes.len() >= f.len() && bytes.windows(f.len()).any(|w| w == f),
+                None => true,
+            };
+            if !hit {
+                continue;
+            }
+            if count >= local_lo && (count < local_hi) {
+                window_idxs.push(idx);
+            }
+            // 继续计数：total 需要本映像的全部命中数（不能提前退出）。
+            count += 1;
+        }
+        let in_window = !window_idxs.is_empty();
         let mut users: std::collections::HashMap<u32, Vec<String>> =
             std::collections::HashMap::default();
         if with_locations && in_window {
-            let wanted: std::collections::HashSet<u32> = matched
-                .keys()
-                .skip(local_lo)
-                .take(local_hi.saturating_sub(local_lo))
-                .copied()
-                .collect();
+            let wanted: std::collections::HashSet<u32> = window_idxs.iter().copied().collect();
             for ci in 0..dex.cls_n {
                 let Some((ty, _, _, cdo, _)) = dex.class_def_parts(ci) else {
                     continue;
@@ -713,8 +715,7 @@ pub fn string_scan_window(
             }
         }
         if in_window {
-            let take = local_hi.saturating_sub(local_lo);
-            for &idx in matched.keys().skip(local_lo).take(take) {
+            for &idx in &window_idxs {
                 let s = decode_mutf8_lossy(dex.string_bytes(idx).unwrap_or(&[]));
                 let used_by = match users.get(&idx) {
                     Some(u) if !u.is_empty() => {
