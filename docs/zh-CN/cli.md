@@ -151,14 +151,15 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   一样遵循容器 base 优先规则）。随后是逐 dex 表：每个镜像一行的
   版本、类/方法/字段/字符串计数，外加合计行。裸 `.dex` 输入没有
   manifest，跳过头部只打印表格。
-- **`ddc listclasses <输入> [模式]`** —— 类名，点分形式；模式为大小写不敏感子串。
-  `--summary`（`--tree`）改为输出压缩前缀目录视图：每个分叉包一行
-  `包/ (类数)`，加上类叶子——20 万类的应用一屏即可看结构。用 `--prefix P`
-  钻取（段级精确：`a.b` 匹配 `a.b` 与 `a.b.*`），`--depth N` 在范围下
-  恰好 N 段处聚合；`--sort count` 大类优先。`--limit`/`--offset` 对
-  行（平铺视图为类名）翻页：`--format json` 随之携带
+- **`ddc listclasses <输入> [模式]`** —— 以压缩前缀目录视图输出类结构（默认）：
+  每个分叉包一行 `包/ (类数)`，加上类叶子——20 万类的应用一屏即可看结构。
+  模式为大小写不敏感子串过滤（先过滤再建树）。用 `--prefix P` 钻取
+  （段级精确：`a.b` 匹配 `a.b` 与 `a.b.*`），`--depth N` 在范围下恰好
+  N 段处聚合；`--sort count` 大类优先。`--limit`/`--offset` 对行
+  （平铺视图为类名）翻页：`--format json` 携带
   `total`/`offset`/`returned`/`next_offset`，摘要视图始终是带
-  `rows[].path/kind/classes` 的 JSON 对象。
+  `rows[].path/kind/classes` 的 JSON 对象。`--full` 恢复旧行为：
+  全量平铺类名。
 - **`ddc manifest <apk> [--component C] [-o FILE]`** —— 把二进制
   AndroidManifest.xml 解码成文本 XML。`--component` 过滤到一种元素：
   `launcher`（MAIN/LAUNCHER 入口 Activity）、`activity`、`service`、

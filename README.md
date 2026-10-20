@@ -105,6 +105,8 @@ ddc app.apk -o - | less              # everything to stdout
 
 ddc info app.apk                      # app context (label via arsc, package,
                                       # version, md5) + per-dex counts
+ddc listclasses app.apk              # package tree with class counts
+                                      # (--full: flat names)
 ddc mainactivity app.apk             # entry point: package + launcher
 ddc findrefs app.apk string token    # every const-string "token" site
 ddc getmethod app.apk Foo.toString   # one method, all overloads

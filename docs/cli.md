@@ -170,16 +170,17 @@ clean (timing prints only with `-o`).
   the per-dex table: one row per image with version, class, method,
   field, string counts, plus a total row. Bare `.dex` inputs skip the
   header (no manifest) and print the table only.
-- **`ddc listclasses <input> [pattern]`** — class names, dotted form;
-  pattern is a case-insensitive substring. `--summary` (`--tree`) prints
-  a compressed prefix frontier instead: one row per branching package
+- **`ddc listclasses <input> [pattern]`** — class structure as a
+  compressed prefix frontier (the default): one row per branching package
   (`pkg/ (classes)`) plus class leaves, so a 200k-class app fits on one
-  screen. Drill with `--prefix P` (segment-exact: `a.b` matches `a.b`
-  and `a.b.*`) and `--depth N` (aggregate exactly N segments below the
+  screen. Pattern is a case-insensitive substring filter applied first.
+  Drill with `--prefix P` (segment-exact: `a.b` matches `a.b` and
+  `a.b.*`) and `--depth N` (aggregate exactly N segments below the
   scope); `--sort count` puts the biggest groups first. `--limit` /
-  `--offset` page rows (or classes in the flat view): `--format json`
-  then carries `total`/`offset`/`returned`/`next_offset`, and the summary
-  view is always a JSON object with `rows[].path/kind/classes`.
+  `--offset` page rows (classes in the flat view): `--format json`
+  carries `total`/`offset`/`returned`/`next_offset`, and the summary view
+  is always a JSON object with `rows[].path/kind/classes`. `--full`
+  restores the pre-summary behavior: flat, unwindowed class names.
 - **`ddc manifest <apk> [--component C] [-o FILE]`** — decodes the
   binary AndroidManifest.xml to text XML. `--component` filters to one
   element kind: `launcher` (the MAIN/LAUNCHER activity), `activity`,

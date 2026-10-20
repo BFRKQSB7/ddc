@@ -59,11 +59,11 @@ struct ListclassesArgs {
     pattern: String,
     #[xyz(desc = "segment-exact class prefix scope (a.b matches a.b and a.b.*)")]
     prefix: String,
-    #[xyz(desc = "group into a compressed prefix frontier with class counts")]
-    summary: bool,
-    #[xyz(desc = "with summary: aggregate at exactly N segments below the prefix (0 = adaptive)")]
+    #[xyz(desc = "flat full listing (default: compressed prefix frontier with counts)")]
+    full: bool,
+    #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive frontier)")]
     depth: i64,
-    #[xyz(desc = "with summary: row order", enum = "name,count")]
+    #[xyz(desc = "row order (name = lexicographic, count = biggest groups first)", enum = "name,count")]
     sort: String,
     #[xyz(desc = "maximum rows to return (0 = unlimited)")]
     limit: i64,
@@ -89,13 +89,20 @@ fn listclasses(_ctx: &Ctx, a: &ListclassesArgs) -> XyzResult<Vec<String>> {
             format!("sort must be name|count, got {:?}", a.sort),
         ));
     }
+    if a.full && (a.depth > 0 || !a.sort.is_empty()) {
+        return Err(errs::new(
+            errs::Kind::InvalidInput,
+            "depth/sort only apply to the summary view (the default); drop full".to_string(),
+        ));
+    }
     let prefix = {
         let n = api::normalize_class_prefix(&a.prefix);
         if n.is_empty() { None } else { Some(n) }
     };
     let limit = a.limit as usize;
     let offset = a.offset as usize;
-    if a.summary {
+    // 摘要前缀目录是默认视图；full=true 恢复平铺全量列表。
+    if !a.full {
         let page = api::class_names(
             &p(&a.input),
             empty_or_some(&a.pattern),
@@ -320,7 +327,7 @@ pub fn run(args: Vec<String>) -> i32 {
         .mcp(mcp_read())
         .also(&[
             &xyz_rust::define("ddc.listclasses", listclasses)
-                .summary("List class names, optionally filtered")
+                .summary("Class structure as a prefix frontier with counts (full=true: flat names)")
                 .cli(skip_cli())
                 .http(http("/classes"))
                 .mcp(mcp_read()),
