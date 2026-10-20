@@ -25,14 +25,46 @@ fn p(input: &str) -> PathBuf {
 }
 
 fn map_err(e: anyhow::Error) -> errs::Error {
-    // File-not-found and friends surface as 404; the rest as internal.
+    // 404 = 找不到输入/类；400 = 调用方的参数取值不可接受（dex 过滤无命中、
+    // 非 zip/dex、枚举值错误等）——这些曾是 500，会让客户端误判为服务故障。
     let msg = e.to_string();
-    let kind = if msg.contains("os error 2") || msg.contains("not found") {
+    let lower = msg.to_ascii_lowercase();
+    let kind = if msg.contains("os error 2") || lower.contains("not found") {
         errs::Kind::NotFound
+    } else if lower.contains("no matching dex images")
+        || lower.contains("bad magic")
+        || lower.contains("not a dex image")
+        || lower.contains("not a zip container")
+        || lower.contains("unknown kind")
+        || lower.contains("is ambiguous")
+        || lower.contains("invalid")
+        || lower.contains("needs <")
+        || lower.contains("too many arguments")
+    {
+        errs::Kind::InvalidInput
     } else {
         errs::Kind::Internal
     };
     errs::new(kind, format!("{e:#}"))
+}
+
+#[cfg(test)]
+mod err_tests {
+    use super::*;
+
+    fn kind_of(msg: &str) -> errs::Kind {
+        map_err(anyhow::anyhow!("{msg}")).kind()
+    }
+
+    #[test]
+    fn user_input_errors_are_not_internal() {
+        assert_eq!(kind_of("--dex nope: no matching dex images (available: classes.dex)"), errs::Kind::InvalidInput);
+        assert_eq!(kind_of("/tmp/x.apk: not a DEX image or ZIP/APK archive (bad magic)"), errs::Kind::InvalidInput);
+        assert_eq!(kind_of("findrefs: unknown kind \"bogus\""), errs::Kind::InvalidInput);
+        assert_eq!(kind_of("res: \"x\" is ambiguous: a, b"), errs::Kind::InvalidInput);
+        assert_eq!(kind_of("input not found: /no/such.apk"), errs::Kind::NotFound);
+        assert_eq!(kind_of("dex entry truncated"), errs::Kind::Internal);
+    }
 }
 
 // ---- ddc.info ----------------------------------------------------------------
@@ -59,7 +91,9 @@ struct ListclassesArgs {
     pattern: String,
     #[xyz(desc = "segment-exact class prefix scope (a.b matches a.b and a.b.*)")]
     prefix: String,
-    #[xyz(desc = "flat raw rows (default: compressed prefix frontier with counts)")]
+    #[xyz(desc = "explicitly select the summary view (already the default)")]
+    summary: bool,
+    #[xyz(desc = "flat raw rows (overrides summary)")]
     flat: bool,
     #[xyz(desc = "aggregate at exactly N segments below the prefix (0 = adaptive frontier)")]
     depth: i64,
@@ -218,7 +252,9 @@ struct FindRefsArgs {
     class: String,
     #[xyz(desc = "match the owner class fuzzily")]
     fuzzy_class: bool,
-    #[xyz(desc = "flat hit rows (default: prefix frontier of owner classes)")]
+    #[xyz(desc = "explicitly select the summary view (already the default)")]
+    summary: bool,
+    #[xyz(desc = "flat hit rows (overrides summary)")]
     flat: bool,
     #[xyz(desc = "segment-exact owner-class scope (a.b matches a.b and a.b.*)")]
     prefix: String,
@@ -448,7 +484,9 @@ struct HierarchyArgs {
     input: String,
     #[xyz(desc = "class name, dotted or slashed", required)]
     class: String,
-    #[xyz(desc = "flat relation rows (default: per-relation prefix frontier)")]
+    #[xyz(desc = "explicitly select the summary view (already the default)")]
+    summary: bool,
+    #[xyz(desc = "flat relation rows (overrides summary)")]
     flat: bool,
     #[xyz(desc = "segment-exact scope on the result classes (a.b matches a.b and a.b.*)")]
     prefix: String,
