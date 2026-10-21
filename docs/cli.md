@@ -83,7 +83,7 @@ options instead of the main help; `ddc help serve|http|mcp` (or
 `ddc serve -h`, …) document each server mode's flags, endpoints and
 worked connection examples.
 
-### Output formats (`--format` on every query command)
+### Output formats (`--format` on query commands with a typed report; `res` and `largest` print text only)
 
 `auto` (the default) picks by stdout: a terminal gets the human
 rendering, a pipe gets the stable text form scripts have always
@@ -180,7 +180,8 @@ clean (timing prints only with `-o`).
   `--offset` page rows (classes in the flat view): `--format json`
   carries `total`/`offset`/`returned`/`next_offset`, and the summary view
   is always a JSON object with `rows[].path/kind/classes`. `--flat`
-  restores the pre-summary behavior: flat, unwindowed class names.
+  (alias `--full`) restores the pre-summary behavior: flat, unwindowed
+  class names.
 - **`ddc manifest <apk> [--component C] [-o FILE]`** — decodes the
   binary AndroidManifest.xml to text XML. `--component` filters to one
   element kind: `launcher` (the MAIN/LAUNCHER activity), `activity`,

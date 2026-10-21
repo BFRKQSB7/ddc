@@ -187,10 +187,10 @@ pub(crate) fn component_xml(xml: &str, component: &str) -> String {
         "service" | "services" => ("service", "services"),
         "receiver" | "receivers" => ("receiver", "receivers"),
         "provider" | "providers" => ("provider", "providers"),
-        "activity-alias" => ("activity-alias", "activity-aliases"),
-        "application" => ("application", "application"),
+        "activity-alias" | "activity-aliases" => ("activity-alias", "activity-aliases"),
+        "application" | "applications" => ("application", "application"),
         "permission" | "permissions" => ("uses-permission", "permissions"),
-        "launcher" => ("launcher", "launcher"),
+        "launcher" | "launchers" => ("launcher", "launcher"),
         _ => return xml.to_string(),
     };
     let facts = parse_facts(xml);

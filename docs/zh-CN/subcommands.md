@@ -26,7 +26,7 @@
 | `ddc pkg app.apk com.example.foo [-o DIR]` | 整包反编译（段边界前缀匹配，含子包；只跑选中类的完整管线）；`--app` 自动取 manifest 包名（空时回退 launcher 包） | 0.165s（Telegram tgnet 1561 类）/ `--app` 1.7s（org.telegram 5103 类） |
 | `ddc mainactivity app.apk` | manifest 包名 + MAIN/LAUNCHER 入口 Activity，并在 dex 里定位验证 | **0.02s** |
 | `ddc res app.apk [entry] [-o FILE]` | 归档目录摘要（`--flat` = 平铺条目，`--prefix` 展开）；单条目解码二进制 XML，文本直出，二进制 `-o` 保存 | **0.01s** |
-| `ddc manifest app.apk --component launcher` | 组件过滤（launcher/activity/service/receiver/provider） | **0.06s** |
+| `ddc manifest app.apk --component launcher` | 组件过滤（launcher/activity/service/receiver/provider/permission/activity-alias/application） | **0.06s** |
 | （全量对照）`ddc app.apk -o out/` | 98,348 个类全部反编译落盘 | 5.45s / 1.28GB |
 
 **定位类在哪个 dex**：`--dex NAME`（可重复，条目名子串匹配）把范围缩到指定镜像——

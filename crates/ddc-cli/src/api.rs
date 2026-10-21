@@ -1129,8 +1129,10 @@ fn dex_match(nb: &[u8], needle: &[u8]) -> bool {
 /// Hierarchy rows for a class (dotted or slashed `target`): its own
 /// `class`/`extends`/`implements` rows plus every direct `sub`/`impl`.
 pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Result<Vec<RelationRow>> {
+    let display = target.to_string();
     let target = target.replace('.', "/");
     let mut rows: Vec<RelationRow> = Vec::new();
+    let mut found = false;
     for_each_image(&input.to_path_buf(), dex_filters, &mut |label, image| {
         let dex_name = label
             .rsplit_once('!')
@@ -1147,6 +1149,7 @@ pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Res
                 let plain = n.trim_start_matches('L').trim_end_matches(';');
                 if plain == target {
                     target_idx = Some(ti);
+                    found = true;
                     break;
                 }
             }
@@ -1192,6 +1195,7 @@ pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Res
                 if sup != u32::MAX {
                     if let Some(sb) = dex.type_bytes(sup) {
                         if plain_of(&decode_mutf8_lossy(sb)) == target {
+                            found = true;
                             push("sub", self_name.clone());
                         }
                     }
@@ -1199,16 +1203,27 @@ pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Res
                 for it in dex.interface_types(iface_off) {
                     if let Some(ib) = dex.type_bytes(it) {
                         if plain_of(&decode_mutf8_lossy(ib)) == target {
+                            found = true;
                             push("impl", self_name.clone());
                         }
                     }
                 }
                 if plain_of(&self_name) == target {
+                    found = true;
                     push("class", self_name.clone());
                 }
             }
         }
     })?;
+    if !found && rows.is_empty() {
+        bail!(
+            crate::lang::bif!(
+                "class {0} not found in the selected image(s) (try `ddc listclasses <input> <pattern>`)",
+                "类 {0} 在所选镜像中不存在（可试 `ddc listclasses <输入> <模式>`）";
+                display
+            )
+        );
+    }
     Ok(rows)
 }
 
@@ -1220,16 +1235,26 @@ pub fn disasm_text(input: &Path, target: &str, dex_filters: &[String]) -> Result
         .filter(|(c, m)| !c.is_empty() && !m.is_empty() && !m.contains('('))
         .map(|(c, m)| (c.replace('.', "/"), m.to_string()));
     let mut out = String::new();
+    let mut found_class = false;
+    let mut wanted_method: Option<String> = None;
+    let mut printed_method = false;
     for_each_image(&input.to_path_buf(), dex_filters, &mut |label, image| {
         let Ok(dex) = RawDex::parse(image) else {
             return;
         };
         let (ci, method_want) = match dex.find_class(&class_full) {
-            Some(ci) => (ci, None),
+            Some(ci) => {
+                found_class = true;
+                (ci, None)
+            }
             None => {
                 let Some((c, m)) = &split else { return };
                 match dex.find_class(c) {
-                    Some(ci) => (ci, Some(m.clone())),
+                    Some(ci) => {
+                        found_class = true;
+                        wanted_method = Some(m.clone());
+                        (ci, Some(m.clone()))
+                    }
                     None => return,
                 }
             }
@@ -1252,6 +1277,7 @@ pub fn disasm_text(input: &Path, target: &str, dex_filters: &[String]) -> Result
                     continue;
                 }
             }
+            printed_method = true;
             out.push_str(&format!("  {}:\n", owner));
             if code_off as usize + 16 > dex.d.len() {
                 continue;
@@ -1275,6 +1301,27 @@ pub fn disasm_text(input: &Path, target: &str, dex_filters: &[String]) -> Result
             }
         }
     })?;
+    if !found_class {
+        bail!(
+            crate::lang::bif!(
+                "class {0} not found in the selected image(s) (try `ddc listclasses <input> <pattern>`)",
+                "类 {0} 在所选镜像中不存在（可试 `ddc listclasses <输入> <模式>`）";
+                target
+            )
+        );
+    }
+    if let Some(m) = &wanted_method {
+        if !printed_method {
+            bail!(
+                crate::lang::bif!(
+                    "method {0} not found in {1}",
+                    "方法 {0} 在 {1} 中不存在";
+                    m,
+                    split.as_ref().map(|(c, _)| c.as_str()).unwrap_or(&class_full)
+                )
+            );
+        }
+    }
     Ok(out)
 }
 

@@ -136,7 +136,7 @@ fn print_help_en() {
     println!("    pkg <input> com.foo [-o DIR]    one package incl. subpackages;");
     println!("                                    --app uses the manifest package");
     println!();
-    println!("Output formats — every query command takes --format:");
+    println!("Output formats — query commands with a typed report take --format (res and largest print text only):");
     println!("  auto (default)   table when stdout is a terminal, text when piped");
     println!("  text             the stable column format scripts have always parsed");
     println!("  table            aligned tables with header rules (xyz-rust renderer)");
@@ -260,7 +260,7 @@ fn print_help_zh() {
     println!("    getmethod <输入> FQCN.方法      单方法，含全部重载");
     println!("    pkg <输入> com.foo [-o 目录]    单个包（含子包）；--app 取 manifest 包名");
     println!();
-    println!("输出格式 —— 每个查询子命令都接受 --format：");
+    println!("输出格式 —— 有结构化报告的查询命令都接受 --format（res 与 largest 仅输出文本）：");
     println!("  auto（默认）     stdout 是终端时输出表格，被管道/程序调用时输出文本");
     println!("  text             脚本一直在解析的稳定列格式");
     println!("  table            对齐表格 + 表头分隔线（xyz-rust 渲染器）");
@@ -404,7 +404,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             args: &[
             ],
             opts: &[
-                ("‑c, --component KIND", "emit one component group only (launcher|activity|service|receiver|provider)"),
+                ("‑c, --component KIND", "one component group only (launcher|activity|service|receiver|provider|permission|activity-alias|application; plurals accepted)"),
                 OUT_FILE_EN,
             ],
             examples: &[
@@ -760,7 +760,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             args: &[
             ],
             opts: &[
-                ("-c, --component KIND", "只输出一组组件（launcher|activity|service|receiver|provider）"),
+                ("-c, --component KIND", "只输出一组组件（launcher|activity|service|receiver|provider|permission|activity-alias|application；接受复数别名）"),
                 OUT_FILE_ZH,
             ],
             examples: &[
@@ -1741,11 +1741,37 @@ fn cmd_manifest(args: &[String], t0: std::time::Instant) -> Result<()> {
                 i += 1;
             }
             "-c" | "--component" => {
-                component = Some(
-                    args.get(i + 1)
-                        .context(bi!("--component needs a value", "--component 需要一个值"))?
-                        .clone(),
-                );
+                let v = args
+                    .get(i + 1)
+                    .context(bi!("--component needs a value", "--component 需要一个值"))?
+                    .clone();
+                // 与 MCP 通道的 enum 对齐（另接受复数别名）。
+                const CANON: [&str; 8] = [
+                    "launcher",
+                    "activity",
+                    "service",
+                    "receiver",
+                    "provider",
+                    "permission",
+                    "activity-alias",
+                    "application",
+                ];
+                let base = match v.as_str() {
+                    "activities" => "activity",
+                    "activity-aliases" => "activity-alias",
+                    other => other.strip_suffix('s').unwrap_or(other),
+                };
+                if !CANON.contains(&v.as_str()) && !CANON.contains(&base) {
+                    bail!(
+                        "{}",
+                        bif!(
+                            "manifest: unknown --component {0:?} (launcher|activity|service|receiver|provider|permission|activity-alias|application)",
+                            "manifest：未知 --component {0:?}（launcher|activity|service|receiver|provider|permission|activity-alias|application）";
+                            v
+                        )
+                    );
+                }
+                component = Some(v);
                 i += 1;
             }
             a if a.starts_with('-') => bail!(

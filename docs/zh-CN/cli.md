@@ -75,7 +75,7 @@ DDC_LANG=en ddc -V        # zh 区域下强制英文
 `ddc help serve|http|mcp`（或 `ddc serve -h` 等）给出每个服务器模式的
 旗标、端点与连接示例。
 
-### 输出格式（每个查询命令的 `--format`）
+### 输出格式（有结构化报告的查询命令都支持 `--format`；`res` 与 `largest` 仅输出文本）
 
 `auto`（默认）按 stdout 分流：终端取人类渲染，管道取脚本一直在解析的
 稳定文本。
@@ -158,8 +158,8 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   N 段处聚合；`--sort count` 大类优先。`--limit`/`--offset` 对行
   （平铺视图为类名）翻页：`--format json` 携带
   `total`/`offset`/`returned`/`next_offset`，摘要视图始终是带
-  `rows[].path/kind/classes` 的 JSON 对象。`--flat` 恢复旧行为：
-  全量平铺类名。
+  `rows[].path/kind/classes` 的 JSON 对象。`--flat`（别名 `--full`）
+  恢复旧行为：全量平铺类名。
 - **`ddc manifest <apk> [--component C] [-o FILE]`** —— 把二进制
   AndroidManifest.xml 解码成文本 XML。`--component` 过滤到一种元素：
   `launcher`（MAIN/LAUNCHER 入口 Activity）、`activity`、`service`、

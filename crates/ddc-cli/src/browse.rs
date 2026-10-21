@@ -752,7 +752,7 @@ pub(crate) fn cmd_hierarchy(args: &[String]) -> Result<()> {
         .rest
         .first()
         .context(bi!("hierarchy needs a class name", "hierarchy 需要类名"))?
-        .replace('.', "/");
+        .clone();
     let mut rows = crate::api::hierarchy_rows(&common.input, &target, &common.dex_filters)?;
     if let Some(p) = &prefix {
         rows.retain(|r| {
@@ -931,11 +931,22 @@ pub(crate) fn cmd_largest(args: &[String]) -> Result<()> {
     while i < args.len() {
         match args[i].as_str() {
             "-n" => {
-                limit = args
+                let v = args
                     .get(i + 1)
-                    .context(bi!("-n needs a count", "-n 需要一个数量"))?
-                    .parse()
-                    .unwrap_or(20);
+                    .context(bi!("-n needs a count", "-n 需要一个数量"))?;
+                limit = v.parse().map_err(|_| {
+                    anyhow::anyhow!(
+                        "{}",
+                        bif!(
+                            "largest: -n expects a positive integer, got {0:?}",
+                            "largest：-n 需要正整数，收到 {0:?}";
+                            v
+                        )
+                    )
+                })?;
+                if limit == 0 {
+                    bail!("{}", bi!("largest: -n must be at least 1", "largest：-n 至少为 1"));
+                }
                 i += 1;
             }
             "-d" | "--dex" => {
@@ -1055,84 +1066,21 @@ pub(crate) fn cmd_disasm(args: &[String]) -> Result<()> {
         "disasm needs a class name (optionally Class.method)",
         "disasm 需要类名（可选 类.方法）"
     ))?;
-    if format != crate::OutFormat::Text {
-        let text = crate::api::disasm_text(&common.input, target, &common.dex_filters)?;
-        let rf = crate::resolve_format(format);
-        match rf {
-            crate::ResolvedFormat::Text => {}
-            crate::ResolvedFormat::Json | crate::ResolvedFormat::Jsonl => {
-                return crate::print_report(
-                    rf,
-                    &serde_json::json!({ "target": target, "disasm": text }),
-                );
-            }
-            _ => return crate::print_source(rf, &text, ""),
+    // 统一走 api::disasm_text：类/方法不存在时返回错误（与 getclass/
+    // getmethod 一致），文本输出与旧的逐行打印逐字节相同。
+    let text = crate::api::disasm_text(&common.input, target, &common.dex_filters)?;
+    let rf = crate::resolve_format(format);
+    match rf {
+        crate::ResolvedFormat::Text => {
+            print!("{text}");
+            Ok(())
         }
+        crate::ResolvedFormat::Json | crate::ResolvedFormat::Jsonl => crate::print_report(
+            rf,
+            &serde_json::json!({ "target": target, "disasm": text }),
+        ),
+        _ => crate::print_source(rf, &text, ""),
     }
-    let class_full = target.replace('.', "/");
-    // `Cells.t1` (whole thing is a class) vs `Greeter.greet` (class + method):
-    // try the whole string as a class first, then fall back to splitting at
-    // the last dot.
-    let split = target
-        .rsplit_once('.')
-        .filter(|(c, m)| !c.is_empty() && !m.is_empty() && !m.contains('('))
-        .map(|(c, m)| (c.replace('.', "/"), m.to_string()));
-
-    for_each_image(&common.input, &common.dex_filters, &mut |label, image| {
-        let Ok(dex) = RawDex::parse(image) else {
-            return;
-        };
-        let (ci, method_want) = match dex.find_class(&class_full) {
-            Some(ci) => (ci, None),
-            None => {
-                let Some((c, m)) = &split else { return };
-                match dex.find_class(c) {
-                    Some(ci) => (ci, Some(m.clone())),
-                    None => return,
-                }
-            }
-        };
-        let (ty, _, _, cdo, _) = dex.class_def_parts(ci).unwrap();
-        println!("// {} {}", label, dex.class_name(ty));
-        let Some(methods) = dex.methods_of(cdo as usize) else {
-            return;
-        };
-        for (midx, _acc, code_off) in methods {
-            if code_off == 0 {
-                continue;
-            }
-            let owner = dex
-                .method_parts(midx)
-                .map(|(_, p, nb)| format!("{}{}", decode_mutf8_lossy(nb), dex.proto_desc(p)))
-                .unwrap_or_default();
-            if let Some(w) = &method_want {
-                if !owner.starts_with(w.as_str()) {
-                    continue;
-                }
-            }
-            println!("  {}:", owner);
-            if code_off as usize + 16 > dex.d.len() {
-                continue;
-            }
-            let insns = u32::from_le_bytes([
-                dex.d[code_off as usize + 12],
-                dex.d[code_off as usize + 13],
-                dex.d[code_off as usize + 14],
-                dex.d[code_off as usize + 15],
-            ]) as usize;
-            let start = code_off as usize + 16;
-            let end = (start + 2 * insns).min(dex.d.len());
-            let (insns, payloads) = ddc_dex::insn::decode_all(&dex.d[start..end]);
-            for i in &insns {
-                println!(
-                    "    {:04x}: {} {}",
-                    2 * i.pc,
-                    ddc_dex::insn::op_name(i.op),
-                    fmt_operands(&dex, i, &payloads)
-                );
-            }
-        }
-    })
 }
 
 /// Render one instruction's operands with resolved indices: registers as
