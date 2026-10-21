@@ -955,9 +955,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.5.1"
+version = "3.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
+checksum = "ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26"
 dependencies = [
  "async-trait",
  "base64",
@@ -968,6 +968,7 @@ dependencies = [
  "http-body",
  "http-body-util",
  "indexmap",
+ "libc",
  "pastey",
  "pin-project-lite",
  "rand",
@@ -1613,9 +1614,9 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "xyz-rust"
-version = "0.4.11"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe41e1b1b2ce624c22970c2877170a6130e4ce1e5a4721cc03a06f37350682c4"
+checksum = "243406993682ef91f149effa59e4fc72db9609b46ee9763e58334864f13d3a7e"
 dependencies = [
  "axum",
  "axum-server",
@@ -1635,9 +1636,9 @@ dependencies = [
 
 [[package]]
 name = "xyz-rust-macros"
-version = "0.4.11"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd77566bcddeb8026553f7ee67c39ac88fd6a75a81bf9f0a0c29f00fac466899"
+checksum = "5426c51cd5ea7cc7b9dd11d1d8f17875d19d01a0ef048f4a3e33862af886fb1c"
 dependencies = [
  "proc-macro2",
  "quote",
