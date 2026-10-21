@@ -248,40 +248,49 @@ pub fn class_names(
     limit: usize,
 ) -> Result<ClassPage> {
     let files = expand_inputs(&[input.to_path_buf()])?;
-    let images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
-    let handles: Vec<_> = images
-        .into_iter()
-        .map(|img| {
-            std::thread::spawn(move || {
-                let raw = match img.method {
-                    crate::ZipMethod::Stored => img.data.bytes()[img.range].to_vec(),
-                    crate::ZipMethod::Deflate => {
-                        crate::inputs::inflate_until(img.data.bytes(), img.range.clone(), |out| {
-                            match crate::inputs::scan_prefix_needed(out) {
-                                None => crate::inputs::PrefixStep::Continue(0),
-                                Some(needed) => {
-                                    if out.len() >= needed {
-                                        crate::inputs::PrefixStep::Abort
-                                    } else {
-                                        crate::inputs::PrefixStep::Continue(needed - out.len())
-                                    }
-                                }
-                            }
-                        })
-                        .unwrap_or_default()
-                    }
-                };
-                ddc_dex::DexFile::class_names_from_image(&raw)
-            })
-        })
-        .collect();
+    let mut images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
     let mut all: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for h in handles {
-        if let Ok(names) = h.join() {
-            for name in names {
-                if seen.insert(name.clone()) {
-                    all.push(name);
+    // 分波解压（每波 ≤8）：此前对每个 dex 无界并发解压，37 个映像同时
+    // 驻留会让 serve/MCP 常驻内存冲到 ~500MB；顺序进、顺序出，结果不变。
+    const WAVE: usize = 8;
+    while !images.is_empty() {
+        let take = WAVE.min(images.len());
+        let wave: Vec<_> = images.drain(..take).collect();
+        let handles: Vec<_> = wave
+            .into_iter()
+            .map(|img| {
+                std::thread::spawn(move || {
+                    let raw = match img.method {
+                        crate::ZipMethod::Stored => img.data.bytes()[img.range].to_vec(),
+                        crate::ZipMethod::Deflate => {
+                            crate::inputs::inflate_until(
+                                img.data.bytes(),
+                                img.range.clone(),
+                                |out| match crate::inputs::scan_prefix_needed(out) {
+                                    None => crate::inputs::PrefixStep::Continue(0),
+                                    Some(needed) => {
+                                        if out.len() >= needed {
+                                            crate::inputs::PrefixStep::Abort
+                                        } else {
+                                            crate::inputs::PrefixStep::Continue(needed - out.len())
+                                        }
+                                    }
+                                },
+                            )
+                            .unwrap_or_default()
+                        }
+                    };
+                    ddc_dex::DexFile::class_names_from_image(&raw)
+                })
+            })
+            .collect();
+        for h in handles {
+            if let Ok(names) = h.join() {
+                for name in names {
+                    if seen.insert(name.clone()) {
+                        all.push(name);
+                    }
                 }
             }
         }
