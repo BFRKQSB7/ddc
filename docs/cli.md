@@ -179,8 +179,11 @@ clean (timing prints only with `-o`).
   scope); `--sort count` puts the biggest groups first. `--limit` /
   `--offset` page rows (classes in the flat view): `--format json`
   carries `total`/`offset`/`returned`/`next_offset`, and the summary view
-  is always a JSON object with `rows[].path/kind/classes`. `--full` restores the pre-summary behavior: flat, unwindowed class
-  names.
+  is always a JSON object with `rows[].path/kind/classes`. Paging is
+  deterministic: images are visited in input order and rows within an
+  image in table order, so `--offset` resumes without skipping or
+  duplicating rows. `--full` restores the pre-summary behavior: flat,
+  unwindowed class names.
 - **`ddc manifest <apk> [--component C] [-o FILE]`** — decodes the
   binary AndroidManifest.xml to text XML. `--component` filters to one
   element kind: `launcher` (the MAIN/LAUNCHER activity), `activity`,

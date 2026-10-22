@@ -158,7 +158,9 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
   N 段处聚合；`--sort count` 大类优先。`--limit`/`--offset` 对行
   （平铺视图为类名）翻页：`--format json` 携带
   `total`/`offset`/`returned`/`next_offset`，摘要视图始终是带
-  `rows[].path/kind/classes` 的 JSON 对象。`--full` 恢复旧行为：全量平铺类名。
+  `rows[].path/kind/classes` 的 JSON 对象。翻页顺序确定：镜像按输入序、
+  镜像内按表格序，因此 `--offset` 续页不会跳过或重复行。`--full` 恢复
+  旧行为：全量平铺类名。
 - **`ddc manifest <apk> [--component C] [-o FILE]`** —— 把二进制
   AndroidManifest.xml 解码成文本 XML。`--component` 过滤到一种元素：
   `launcher`（MAIN/LAUNCHER 入口 Activity）、`activity`、`service`、
