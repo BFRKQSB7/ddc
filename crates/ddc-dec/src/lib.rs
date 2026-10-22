@@ -111,10 +111,10 @@ impl PoolMethod {
 /// One pool entry: either already built, or name-registered with its
 /// (dex index, class_def index) locator for on-demand construction.
 enum ClassEntry {
-    Eager(PoolClass),
+    Eager(Box<PoolClass>),
     Lazy {
         at: (usize, usize),
-        pc: std::sync::OnceLock<PoolClass>,
+        pc: std::sync::OnceLock<Box<PoolClass>>,
     },
 }
 
@@ -471,7 +471,7 @@ impl DexPool {
                 continue;
             }
             let pc = pool_class_of(&dex, dex.raw(), cd, dex_idx);
-            self.classes.insert(name.clone(), ClassEntry::Eager(pc));
+            self.classes.insert(name.clone(), ClassEntry::Eager(Box::new(pc)));
             self.order.push(name);
         }
         self.ref_caches
@@ -535,10 +535,10 @@ impl DexPool {
     /// same per-image lock once PER CLASS across all threads.
     fn get_inner(&self, internal: &str, raws: Option<&[&[u8]]>) -> Option<&PoolClass> {
         match self.classes.get(internal)? {
-            ClassEntry::Eager(pc) => Some(pc),
+            ClassEntry::Eager(pc) => Some(&**pc),
             ClassEntry::Lazy { at, pc } => {
                 if let Some(built) = pc.get() {
-                    return Some(built);
+                    return Some(&**built);
                 }
                 let (di, ci) = *at;
                 let dex = self.dexes.get(di)?;
@@ -547,8 +547,8 @@ impl DexPool {
                     Some(r) => r.get(di).copied().unwrap_or(&[]),
                     None => dex.raw(),
                 };
-                let built = pool_class_of(dex, raw, cd, di);
-                Some(pc.get_or_init(move || built))
+                let built = Box::new(pool_class_of(dex, raw, cd, di));
+                Some(&**pc.get_or_init(move || built))
             }
         }
     }
@@ -589,8 +589,8 @@ impl DexPool {
     /// `get` without materializing: None for not-yet-built lazy entries.
     fn get_if_materialized(&self, internal: &str) -> Option<&PoolClass> {
         match self.classes.get(internal)? {
-            ClassEntry::Eager(pc) => Some(pc),
-            ClassEntry::Lazy { pc, .. } => pc.get(),
+            ClassEntry::Eager(pc) => Some(&**pc),
+            ClassEntry::Lazy { pc, .. } => pc.get().map(|b| &**b),
         }
     }
 
@@ -1219,25 +1219,38 @@ impl DexPool {
 }
 
 pub fn top_level_classes(pool: &DexPool) -> Vec<String> {
+    // Progressive (lazy) pools register 100k+ names but materialize only
+    // the target family. `outer_of` would build the global outer map and
+    // `get(outer)` would materialize every outer class — a single-class
+    // query paid ~450MB and hundreds of ms for a boolean. The structural
+    // decision needs neither: `find_outer_name` already resolves the
+    // `$`-chain against registered names, and `has_name` proves existence
+    // without materializing.
+    let lazy = !pool_majority_materialized(pool);
     pool.class_names()
-        .filter(|name| match pool.outer_of(name) {
-            None => true,
-            Some(outer) => {
-                if pool.get(outer).is_none() {
-                    return true;
-                }
-                // The outer can come from an ANNOTATION (EnclosingClass)
-                // with no naming relationship to this class — obfuscated
-                // apps pair a 1-char name with a long enclosing descriptor
-                // (weixin), which made the old blind slice panic. Only a
-                // real `outer$tail` prefix yields a member tail; anything
-                // else is a standalone unit.
-                let rest = name
-                    .strip_prefix(outer)
-                    .and_then(|t| t.strip_prefix('$'))
-                    .unwrap_or("");
-                !clean_member_tail(rest)
+        .filter(|name| {
+            let outer = if lazy {
+                find_outer_name(pool, name)
+            } else {
+                pool.outer_of(name).map(str::to_string)
+            };
+            let Some(outer) = outer else {
+                return true;
+            };
+            if !pool.has_name(&outer) {
+                return true;
             }
+            // The outer can come from an ANNOTATION (EnclosingClass)
+            // with no naming relationship to this class — obfuscated
+            // apps pair a 1-char name with a long enclosing descriptor
+            // (weixin), which made the old blind slice panic. Only a
+            // real `outer$tail` prefix yields a member tail; anything
+            // else is a standalone unit.
+            let rest = name
+                .strip_prefix(outer.as_str())
+                .and_then(|t| t.strip_prefix('$'))
+                .unwrap_or("");
+            !clean_member_tail(rest)
         })
         .map(|n| n.to_string())
         .collect()

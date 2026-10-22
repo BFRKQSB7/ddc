@@ -2436,6 +2436,7 @@ pub(crate) fn getclass_text_mode(
 ) -> Result<(String, Vec<String>)> {
     let files = expand_inputs(inputs)?;
     let parsed = parse_images(filter_images_by_dex(collect_images(&files)?, dex_filters)?)?;
+    stats_rss("getclass: after parse_images");
     let internal = fqcn.replace('.', "/");
 
     // Which images actually define the class? (The pool is first-wins —
@@ -2491,12 +2492,15 @@ pub(crate) fn getclass_text_mode(
         pool.set_dex_label(idx, label);
     }
     let pool = std::sync::Arc::new(pool);
+    stats_rss("getclass: names registered");
     let pc = pool.get(&internal).with_context(|| {
         bif!("class {0} not found (try `ddc listclasses <input> <pattern>`)", "找不到类 {0}（可用 `ddc listclasses <输入> <模式>`）"; fqcn)
     })?;
+    stats_rss("getclass: target materialized");
     // AFTER materializing the target: member renames (field/method
     // collisions) need the pooled fields of the classes being emitted.
     ddc_dec::install_case_renames(&pool);
+    stats_rss("getclass: renames installed");
 
     let pending: std::sync::Mutex<Vec<ddc_dec::classdec::PendingMonitor>> =
         std::sync::Mutex::new(Vec::new());
