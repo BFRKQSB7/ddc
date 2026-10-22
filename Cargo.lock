@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "ddc-dex"
-version = "0.2.5"
+version = "0.2.6"
 
 [[package]]
 name = "dispatch2"
