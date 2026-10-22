@@ -1353,7 +1353,13 @@ pub fn case_rename_map(pool: &DexPool) -> HashMap<String, String> {
     for members in groups.values() {
         for (i, m) in members.iter().enumerate() {
             if i == 0 {
-                map.insert(m.clone(), m.clone());
+                // Identity anchors are only needed for NESTED names: a
+                // top-level name has no `$` prefix for apply_class_rename
+                // to compose, so storing `m -> m` there is pure overhead
+                // (118k entries on lark).
+                if m.contains('$') {
+                    map.insert(m.clone(), m.clone());
+                }
                 continue;
             }
             // Suffix the simple segment; keep incrementing if the fold
