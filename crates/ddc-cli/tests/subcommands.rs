@@ -645,25 +645,23 @@ fn mainactivity_reports_entry_point() {
 }
 
 #[test]
-fn flat_takes_priority_over_summary_flags() {
+fn full_takes_priority_over_summary_flags() {
     let apk = apk_fixture("res");
-    let flat = run(ddc().arg("res").arg(&apk).arg("--flat"));
-    assert!(flat.status.success(), "{}", stderr(&flat));
-    // Summary-only flags are ignored (not an error) when --flat is present.
+    let full = run(ddc().arg("res").arg(&apk).arg("--full"));
+    assert!(full.status.success(), "{}", stderr(&full));
+    // Summary-only flags are ignored (not an error) when --full is present.
     let mixed = run(ddc()
         .arg("res")
         .arg(&apk)
-        .arg("--flat")
-        .arg("--summary")
+        .arg("--full")
         .arg("--depth")
         .arg("2")
         .arg("--sort")
-        .arg("count"));
+        .arg("count")
+        .arg("--samples")
+        .arg("2"));
     assert!(mixed.status.success(), "{}", stderr(&mixed));
-    assert_eq!(stdout(&flat), stdout(&mixed), "flat must win");
-    // `--full` remains an alias.
-    let alias = run(ddc().arg("res").arg(&apk).arg("--full"));
-    assert_eq!(stdout(&flat), stdout(&alias), "--full alias");
+    assert_eq!(stdout(&full), stdout(&mixed), "full must win");
 }
 
 #[test]

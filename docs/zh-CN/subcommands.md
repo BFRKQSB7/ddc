@@ -13,19 +13,19 @@
 | `ddc findrefs app.apk type com.example.Foo` | 类型引用（new-instance/check-cast 等） | ~0.5s |
 | `ddc findrefs app.apk method onCreate --class android/app/Activity` | 方法调用点 | ~0.5s |
 | `ddc findrefs app.apk field CREATOR --class com.example --fuzzy-class` | 字段读写点 | ~0.5s |
-| `ddc listclasses app.apk [pattern]` | 带计数的前缀目录（默认）；`--prefix/--depth` 钻取，`--limit/--offset` 翻页，`--flat` = 全量平铺 | **0.10s** |
+| `ddc listclasses app.apk [pattern]` | 带计数的前缀目录（默认）；`--prefix/--depth` 钻取，`--limit/--offset` 翻页，`--full` = 全量平铺 | **0.10s** |
 | `ddc info app.apk` | App 上下文（arsc 解析应用名、包名、版本、启动类、SDK、大小、md5）+ 每镜像 dex 计数 | **0.11s**（大文件的 md5 占大头） |
 | `ddc getclass app.apk com.example.Foo [-o F.java]` | 单类（含嵌套）定点反编译 | **0.03s**（典型类） |
 | `ddc strings app.apk [-f TEXT] [--with-locations]` | 字符串表；`--with-locations` 映射到方法；`--summary` = 按包统计引用位点；`--limit/--offset` 翻页 | **0.04s** |
-| `ddc members app.apk [NAME] [--class FQCN] [--method\|--field]` | 成员检索；默认类/包目录，`--flat` = 逐条 | **0.04s** |
-| `ddc hierarchy app.apk FQCN` | 继承谱；默认按 relation 的包目录，`--flat` = 逐条 | **0.04s** |
+| `ddc members app.apk [NAME] [--class FQCN] [--method\|--field]` | 成员检索；默认类/包目录，`--full` = 逐条 | **0.04s** |
+| `ddc hierarchy app.apk FQCN` | 继承谱；默认按 relation 的包目录，`--full` = 逐条 | **0.04s** |
 | `ddc largest app.apk [-n N]` | 按指令数排序的 top-N 方法（找巨兽方法） | **0.06s** |
 | `ddc disasm app.apk FQCN[.method]` | 单类/单方法原始字节码（操作码+pc） | **0.04s** |
 | `ddc callers app.apk NAME [FQCN]` | 谁调用了方法 NAME（findrefs 机制；同视图/翻页参数） | ~0.5s |
 | `ddc getmethod app.apk FQCN.method` | 方法粒度切片：只输出目标方法及其全部重载 | **0.03s** |
 | `ddc pkg app.apk com.example.foo [-o DIR]` | 整包反编译（段边界前缀匹配，含子包；只跑选中类的完整管线）；`--app` 自动取 manifest 包名（空时回退 launcher 包） | 0.165s（Telegram tgnet 1561 类）/ `--app` 1.7s（org.telegram 5103 类） |
 | `ddc mainactivity app.apk` | manifest 包名 + MAIN/LAUNCHER 入口 Activity，并在 dex 里定位验证 | **0.02s** |
-| `ddc res app.apk [entry] [-o FILE]` | 归档目录摘要（`--flat` = 平铺条目，`--prefix` 展开）；单条目解码二进制 XML，文本直出，二进制 `-o` 保存 | **0.01s** |
+| `ddc res app.apk [entry] [-o FILE]` | 归档目录摘要（`--full` = 平铺条目，`--prefix` 展开）；单条目解码二进制 XML，文本直出，二进制 `-o` 保存 | **0.01s** |
 | `ddc manifest app.apk --component launcher` | 组件过滤（launcher/activity/service/receiver/provider/permission/activity-alias/application） | **0.06s** |
 | （全量对照）`ddc app.apk -o out/` | 98,348 个类全部反编译落盘 | 5.45s / 1.28GB |
 
