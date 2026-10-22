@@ -432,6 +432,39 @@ fn disasm_whole_class_and_single_method() {
 }
 
 #[test]
+fn disasm_exact_descriptor_selects_one_overload() {
+    // Full descriptor: only the named overload, no constructor noise.
+    let o = run(ddc()
+        .arg("disasm")
+        .arg(fixture())
+        .arg("Greeter.greet()Ljava/lang/String;"));
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = stdout(&o);
+    assert!(
+        out.contains("greet()Ljava/lang/String;:"),
+        "method:\n{}",
+        out
+    );
+    assert!(
+        !out.contains("<init>(Ljava/lang/String;):"),
+        "other methods leaked:\n{}",
+        out
+    );
+
+    // A descriptor that matches no overload is an error, not empty output.
+    let o = run(ddc()
+        .arg("disasm")
+        .arg(fixture())
+        .arg("Greeter.greet(I)V"));
+    assert!(!o.status.success(), "expected failure:\n{}", stdout(&o));
+    assert!(
+        stderr(&o).contains("method greet(I)V not found in Greeter"),
+        "stderr:\n{}",
+        stderr(&o)
+    );
+}
+
+#[test]
 fn callers_finds_invokers() {
     let o = run(ddc().arg("callers").arg(fixture()).arg("println").arg("--full"));
     assert!(o.status.success(), "{}", stderr(&o));

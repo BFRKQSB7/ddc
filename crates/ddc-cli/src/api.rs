@@ -1225,9 +1225,12 @@ pub fn hierarchy_rows(input: &Path, target: &str, dex_filters: &[String]) -> Res
 /// Raw bytecode listing of a class (or one method's overloads).
 pub fn disasm_text(input: &Path, target: &str, dex_filters: &[String]) -> Result<String> {
     let class_full = target.replace('.', "/");
+    // A method part may carry a full descriptor (`parse(Ljava/lang/String;)V`)
+    // for exact-overload selection; descriptors never contain '.', so the
+    // last dot still separates class from method.
     let split = target
         .rsplit_once('.')
-        .filter(|(c, m)| !c.is_empty() && !m.is_empty() && !m.contains('('))
+        .filter(|(c, m)| !c.is_empty() && !m.is_empty())
         .map(|(c, m)| (c.replace('.', "/"), m.to_string()));
     let mut out = String::new();
     let mut found_class = false;
@@ -1268,7 +1271,12 @@ pub fn disasm_text(input: &Path, target: &str, dex_filters: &[String]) -> Result
                 .map(|(_, p, nb)| format!("{}{}", decode_mutf8_lossy(nb), dex.proto_desc(p)))
                 .unwrap_or_default();
             if let Some(w) = &method_want {
-                if !owner.starts_with(w.as_str()) {
+                let matched = if w.contains('(') {
+                    owner == *w
+                } else {
+                    owner.starts_with(w.as_str())
+                };
+                if !matched {
                     continue;
                 }
             }

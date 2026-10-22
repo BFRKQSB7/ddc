@@ -20,7 +20,7 @@
 | `ddc members app.apk [NAME] [--class FQCN] [--method\|--field]` | 成员检索；默认类/包目录，`--full` = 逐条 | **0.04s** |
 | `ddc hierarchy app.apk FQCN` | 继承谱；默认按 relation 的包目录，`--full` = 逐条 | **0.04s** |
 | `ddc largest app.apk [-n N]` | 按指令数排序的 top-N 方法（找巨兽方法） | **0.06s** |
-| `ddc disasm app.apk FQCN[.method]` | 单类/单方法原始字节码（操作码+pc） | **0.04s** |
+| `ddc disasm app.apk FQCN[.method[(params)ret]]` | 单类/单方法原始字节码；带完整描述符可精确指定重载 | **0.04s** |
 | `ddc callers app.apk NAME [FQCN]` | 谁调用了方法 NAME（findrefs 机制；同视图/翻页参数） | ~0.5s |
 | `ddc getmethod app.apk FQCN.method` | 方法粒度切片：只输出目标方法及其全部重载 | **0.03s** |
 | `ddc pkg app.apk com.example.foo [-o DIR]` | 整包反编译（段边界前缀匹配，含子包；只跑选中类的完整管线）；`--app` 自动取 manifest 包名（空时回退 launcher 包） | 0.165s（Telegram tgnet 1561 类）/ `--app` 1.7s（org.telegram 5103 类） |

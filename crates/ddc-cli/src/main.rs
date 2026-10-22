@@ -627,7 +627,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             desc: "raw bytecode listing of a class or one method",
             usage: "ddc disasm <INPUT> <FQCN>[.<method>] [options]",
             args: &[
-                ("FQCN[.<method>]", "dotted class name, optionally .method"),
+                ("FQCN[.<method>[(params)ret]]", "class; a method name lists all overloads, a full descriptor picks one"),
             ],
             opts: &[
                 DEX_EN,
@@ -636,6 +636,7 @@ const SUB_HELP_EN: &[(&str, SubHelp)] = &[
             examples: &[
                 ("ddc disasm app.apk com.example.Foo", "bytecode of every method in the class"),
                 ("ddc disasm app.apk com.example.Foo.toString", "one method name, all overloads"),
+                ("ddc disasm app.apk 'com.example.Foo.parse(Ljava/lang/String;)V'", "one exact overload"),
             ],
         },
     ),
@@ -983,7 +984,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             desc: "一个类或单个方法的原始字节码清单",
             usage: "ddc disasm <输入> <FQCN>[.<方法>] [选项]",
             args: &[
-                ("FQCN[.<方法>]", "点分类名，可选 .方法"),
+                ("FQCN[.<方法>[(params)ret]]", "类名；只写方法名列出全部重载，写完整描述符精确指定一个"),
             ],
             opts: &[
                 DEX_ZH,
@@ -992,6 +993,7 @@ const SUB_HELP_ZH: &[(&str, SubHelp)] = &[
             examples: &[
                 ("ddc disasm app.apk com.example.Foo", "类内每个方法的字节码"),
                 ("ddc disasm app.apk com.example.Foo.toString", "单个方法名，含全部重载"),
+                ("ddc disasm app.apk 'com.example.Foo.parse(Ljava/lang/String;)V'", "精确指定一个重载"),
             ],
         },
     ),

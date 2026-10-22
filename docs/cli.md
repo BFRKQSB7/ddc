@@ -253,7 +253,9 @@ clean (timing prints only with `-o`).
   one method: one line per instruction (`pc opcode mnemonic`). The
   target resolves as a whole-string class first, then splits at the last
   dot — so both `org.foo.Cells.t1` (a class) and `Greeter.greet` (a
-  method) work.
+  method) work. A plain method name lists every overload; append the
+  full descriptor (`'Greeter.greet()Ljava/lang/String;'`) to select one
+  exactly.
 
 ### Decompile surgically
 

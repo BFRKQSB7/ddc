@@ -217,7 +217,8 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
 - **`ddc disasm <输入> FQCN[.方法]`** —— 一个类或一个方法的原始字节码：
   每条指令一行（`pc 操作码 助记符`）。目标先按整串类名解析、失败再按
   最后一个点分割 —— `org.foo.Cells.t1`（类）与 `Greeter.greet`（方法）
-  都能解析。
+  都能解析。只写方法名会列出全部重载；追加完整描述符
+  （`'Greeter.greet()Ljava/lang/String;'`）可精确指定一个。
 
 ### 精准反编译
 

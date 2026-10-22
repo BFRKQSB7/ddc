@@ -26,7 +26,7 @@ stdout output is clean (stderr silent); timing prints only with `-o`.
 | `ddc members <input> [NAME] [--class FQCN] [--fuzzy-class] [--method\|--field]` | member search; default class/package frontier, `--full` = rows | **0.04s** |
 | `ddc hierarchy <input> FQCN` | lineage; default per-relation package frontier, `--full` = rows | **0.04s** |
 | `ddc largest <input> [-n N]` | top-N methods by instruction count | **0.06s** |
-| `ddc disasm <input> FQCN[.method]` | raw bytecode of a class/method (opcode + pc) | **0.04s** |
+| `ddc disasm <input> FQCN[.method[(params)ret]]` | raw bytecode of a class/method; a full descriptor picks one overload | **0.04s** |
 | `ddc callers <input> NAME [FQCN]` | who invokes method NAME (findrefs machinery; same view/paging flags) | ~0.5s |
 | `ddc getmethod <input> FQCN.method` | decompile ONE method — all overloads, sliced out of the class, provenance header kept | **0.03s** |
 | `ddc pkg <input> com.example.foo [-o DIR] [-t N]` | whole-package decompile through the full pipeline (segment-boundary prefix: subpackages included); `--app` takes the package from the manifest | 0.165s (Telegram tgnet, 1561 classes) |
