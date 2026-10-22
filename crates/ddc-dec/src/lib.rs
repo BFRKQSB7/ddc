@@ -116,6 +116,10 @@ enum ClassEntry {
         at: (usize, usize),
         pc: std::sync::OnceLock<Box<PoolClass>>,
     },
+    /// Name registered without an image: used by the two-tier single-class
+    /// path to keep global name-dependent rules (case/package/deshadow)
+    /// identical while only the target's dependency closure is parsed.
+    NameOnly,
 }
 
 /// A class materialized from one `class_def_item` (with ids resolved to
@@ -241,6 +245,12 @@ pub struct DexPool {
     children: std::sync::OnceLock<HashMap<String, Vec<String>>>,
     /// Per-image hot-reference interning (parallel to `dexes`).
     ref_caches: Vec<DexRefCache>,
+    /// Set when the renderer materializes a NameOnly entry: the two-tier
+    /// single-class path then falls back to a full parse instead of
+    /// emitting degraded types.
+    name_only_missed: std::sync::atomic::AtomicBool,
+    /// First NameOnly class the renderer asked for (diagnostics/fallback).
+    name_only_miss: std::sync::Mutex<Option<String>>,
     /// Synthetic-static accessor code snapshots keyed by (dex_idx,
     /// code_off). `inline_accessors` reads accessor bodies ACROSS images
     /// during worker runs; image retirement can release those bytes
@@ -313,6 +323,8 @@ impl DexPool {
             outers: std::sync::OnceLock::new(),
             children: std::sync::OnceLock::new(),
             ref_caches: Vec::new(),
+            name_only_missed: std::sync::atomic::AtomicBool::new(false),
+            name_only_miss: std::sync::Mutex::new(None),
             accessor_code: std::sync::OnceLock::new(),
             pkg_simples: std::sync::OnceLock::new(),
             root_segs: std::sync::OnceLock::new(),
@@ -485,6 +497,19 @@ impl DexPool {
     /// Registers class NAMES only; the PoolClass (annotation reads
     /// included) is materialized on first `get`. Duplicate class names
     /// keep their first definition, matching `add_dex`.
+    /// Register class names without any image. Later `add_dex_lazy` for a
+    /// real image keeps the first registration (first-wins, matching the
+    /// eager/lazy builders); names never materialize.
+    pub fn add_names(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            if self.classes.contains_key(&name) {
+                continue;
+            }
+            self.classes.insert(name.clone(), ClassEntry::NameOnly);
+            self.order.push(name);
+        }
+    }
+
     pub fn add_dex_lazy(&mut self, dex: DexFile) -> usize {
         let dex_idx = self.dexes.len();
         self.classes.reserve(dex.class_defs.len());
@@ -526,7 +551,34 @@ impl DexPool {
     }
 
     pub fn get(&self, internal: &str) -> Option<&PoolClass> {
+        if matches!(self.classes.get(internal), Some(ClassEntry::NameOnly)) {
+            self.name_only_missed
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            let mut slot = self.name_only_miss.lock().unwrap();
+            if slot.is_none() {
+                *slot = Some(internal.to_string());
+            }
+            return None;
+        }
         self.get_inner(internal, None)
+    }
+
+    /// Clear the NameOnly-materialization marker (call before rendering).
+    pub fn clear_name_only_miss(&self) {
+        self.name_only_missed
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        *self.name_only_miss.lock().unwrap() = None;
+    }
+
+    /// Name of the first NameOnly class the renderer requested.
+    pub fn name_only_miss_name(&self) -> Option<String> {
+        self.name_only_miss.lock().unwrap().clone()
+    }
+
+    /// True when rendering needed a class whose image was not parsed.
+    pub fn name_only_missed(&self) -> bool {
+        self.name_only_missed
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// `get` with optional pre-taken raw-image snapshots (one per
@@ -535,6 +587,7 @@ impl DexPool {
     /// same per-image lock once PER CLASS across all threads.
     fn get_inner(&self, internal: &str, raws: Option<&[&[u8]]>) -> Option<&PoolClass> {
         match self.classes.get(internal)? {
+            ClassEntry::NameOnly => None,
             ClassEntry::Eager(pc) => Some(&**pc),
             ClassEntry::Lazy { at, pc } => {
                 if let Some(built) = pc.get() {
@@ -589,6 +642,7 @@ impl DexPool {
     /// `get` without materializing: None for not-yet-built lazy entries.
     fn get_if_materialized(&self, internal: &str) -> Option<&PoolClass> {
         match self.classes.get(internal)? {
+            ClassEntry::NameOnly => None,
             ClassEntry::Eager(pc) => Some(&**pc),
             ClassEntry::Lazy { pc, .. } => pc.get().map(|b| &**b),
         }
@@ -1167,6 +1221,7 @@ impl DexPool {
             let di = match entry {
                 ClassEntry::Eager(pc) => pc.dex_idx,
                 ClassEntry::Lazy { at, .. } => at.0,
+                ClassEntry::NameOnly => continue,
             };
             if let Some(c) = counts.get_mut(di) {
                 *c += 1;
@@ -1184,6 +1239,7 @@ impl DexPool {
         let di = match entry {
             ClassEntry::Eager(pc) => pc.dex_idx,
             ClassEntry::Lazy { at, .. } => at.0,
+            ClassEntry::NameOnly => return None,
         };
         let mut counts = self.retire_counts.lock().unwrap();
         match counts.get_mut(di) {
@@ -1810,6 +1866,7 @@ fn pool_majority_materialized(pool: &DexPool) -> bool {
                     lazy += 1;
                 }
             }
+            ClassEntry::NameOnly => lazy += 1,
         }
     }
     lazy == 0 || mat >= lazy
