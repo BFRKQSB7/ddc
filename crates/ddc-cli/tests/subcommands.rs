@@ -449,6 +449,22 @@ fn callers_finds_invokers() {
 }
 
 #[test]
+fn getmethod_writes_output_file() {
+    let f = std::env::temp_dir().join(format!("ddc-getmethod-{}.java", std::process::id()));
+    let o = run(ddc()
+        .arg("getmethod")
+        .arg(fixture())
+        .arg("Greeter.greet")
+        .arg("-o")
+        .arg(&f));
+    assert!(o.status.success(), "{}", stderr(&o));
+    let text = std::fs::read_to_string(&f).unwrap();
+    assert!(text.contains("greet"), "{}", text);
+    assert!(stdout(&o).is_empty(), "stdout should be empty with -o");
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
 fn getmethod_keeps_provenance_header() {
     let o = run(ddc().arg("getmethod").arg(fixture()).arg("Greeter.greet"));
     assert!(o.status.success(), "{}", stderr(&o));

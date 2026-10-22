@@ -180,9 +180,11 @@ curl '127.0.0.1:8080/findrefs?input=app.apk&kind=string&query=token'
 
 - **`ddc strings <输入> [-f 文本] [--with-locations]`** —— 字符串表（每串
   一行）。`-f` 子串过滤；`--with-locations` 遍历每个方法的 const-string
-  指令，加一列 `used-by` 把命中映射到所属方法。`--limit`/`--offset`
-  翻页（JSON 附带 `total`/`next_offset`）；MCP 工具默认封顶 500 行并
-  在末尾附截断提示。
+  指令，加一列 `used-by` 把命中映射到所属方法。`--summary` 按**引用方
+  类/包**分组统计匹配的引用位点（"哪些包在用这个 URL/密钥"），用
+  `--prefix`/`--depth` 钻取、`--samples N` 附示例类；`--full` 输出原始
+  字符串表（默认视图）。`--limit`/`--offset` 翻页（JSON 附带
+  `total`/`next_offset`）；MCP 工具默认封顶 500 行并在末尾附截断提示。
 - **`ddc findrefs <输入> <string|type|class|method|field> <查询> [--class
   FQCN] [--fuzzy-class] [-o 文件]`** —— 字符串字面量 / 类型 / 方法调用点 /
   字段访问的全部引用（`class` 是 `type` 的常用词别名；继承/实现等定义级

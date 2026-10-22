@@ -1573,6 +1573,7 @@ pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
     let mut rest: Vec<String> = Vec::new();
     let mut format = crate::OutFormat::Auto;
     let mut cure = ddc_dec::classdec::CureMode::Full;
+    let mut out: Option<PathBuf> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -1586,6 +1587,13 @@ pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
                         .context(bi!("--dex needs a value", "--dex 需要一个值"))?
                         .clone(),
                 );
+                i += 1;
+            }
+            "-o" | "--output" => {
+                out = Some(PathBuf::from(
+                    args.get(i + 1)
+                        .context(bi!("-o needs a value", "-o 需要一个值"))?,
+                ));
                 i += 1;
             }
             "--format" => {
@@ -1605,21 +1613,6 @@ pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
         "getmethod needs a Class.method target",
         "getmethod 需要类.方法 目标"
     ))?;
-    let mut out: Option<PathBuf> = None;
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "-o" | "--output" => {
-                out = Some(PathBuf::from(
-                    args.get(i + 1)
-                        .context(bi!("-o needs a value", "-o 需要一个值"))?,
-                ));
-                i += 1;
-            }
-            _ => {}
-        }
-        i += 1;
-    }
     // `Class.method` is the documented form; a bare class name whose last
     // segment looks like a method (`Cells.t1`) must still resolve — try the
     // split class first, then the whole string (no method filter then).
@@ -1627,9 +1620,7 @@ pub(crate) fn cmd_getmethod(args: &[String]) -> Result<()> {
         .rsplit_once('.')
         .filter(|(c, m)| !c.is_empty() && !m.is_empty() && !m.contains('('))
         .map(|(c, m)| (c.to_string(), m.to_string()));
-    if format != crate::OutFormat::Text
-        && !args.iter().any(|a| a == "-o" || a == "--output")
-    {
+    if format != crate::OutFormat::Text && out.is_none() {
         let rf = crate::resolve_format(format);
         match rf {
             crate::ResolvedFormat::Text => {}

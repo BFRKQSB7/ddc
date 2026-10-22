@@ -14,7 +14,8 @@ fn print_serve_help_en() {
     println!("                    (GET/POST /info, /classes, /class, /method,");
     println!("                    /findrefs, /strings, /hierarchy, /disasm,");
     println!("                    /manifest, /mainactivity; GET binds query");
-    println!("                    params, POST also accepts a JSON body)");
+    println!("                    params, POST also accepts a JSON body;");
+    println!("                    unknown query params are rejected with 400)");
     println!("  GET /openapi.json the OpenAPI 3 document for those routes");
     println!("  GET /healthz      liveness probe");
     println!("  /mcp              streamable MCP endpoint — point an MCP client");
@@ -28,6 +29,7 @@ fn print_serve_help_en() {
     println!("  --timeout 45s         per-request timeout (0 = none)");
     println!("  --cors ORIGIN[,ORIG]  allowed CORS origins");
     println!("  --tls-cert F --tls-key F  switch to HTTPS (both required)");
+    println!("  --xyz.allow-unknown-query  accept unknown query params (default 400)");
     println!("  --default k=v         channel default filled into absent request");
     println!("                        keys (repeatable; unknown --key=value is");
     println!("                        shorthand for it)");
@@ -61,7 +63,7 @@ fn print_serve_help_zh() {
     println!("                    （GET/POST /info、/classes、/class、/method、");
     println!("                    /findrefs、/strings、/hierarchy、/disasm、");
     println!("                    /manifest、/mainactivity；GET 绑 query 参数，");
-    println!("                    POST 还接受 JSON body）");
+    println!("                    POST 还接受 JSON body；未知 query 参数默认 400）");
     println!("  GET /openapi.json 上述路由的 OpenAPI 3 文档");
     println!("  GET /healthz      存活探针");
     println!("  /mcp              流式 MCP 端点 —— 把 MCP 客户端指向");
@@ -75,6 +77,7 @@ fn print_serve_help_zh() {
     println!("  --timeout 45s         每请求超时（0 = 无）");
     println!("  --cors 来源[,来源]    允许的 CORS 来源");
     println!("  --tls-cert F --tls-key F  切换 HTTPS（两者都要）");
+    println!("  --xyz.allow-unknown-query  接受未知 query 参数（默认 400 拒绝）");
     println!("  --default k=v         通道默认值，填入请求缺失的键（可重复；");
     println!("                        未识别的 --key=value 是它的简写）");
     println!();
@@ -110,7 +113,8 @@ fn print_http_help_en() {
     println!();
     println!("Flags: same as serve — --addr HOST:PORT (default :8080),");
     println!("  --bearer TOK[,TOK], --timeout 45s, --cors ORIGIN[,ORIG],");
-    println!("  --tls-cert F --tls-key F, --default k=v.");
+    println!("  --tls-cert F --tls-key F, --default k=v,");
+    println!("  --xyz.allow-unknown-query (default: unknown query params are 400).");
     println!();
     println!("Examples:");
     println!("  ddc http --addr 127.0.0.1:8080");
@@ -173,7 +177,8 @@ fn print_mcp_help_en() {
     println!("                        2026-07-28)");
     println!("  --stateless           streamable HTTP in stateless mode (the");
     println!("                        2026-07-28 handshake-free form, SEP-2567)");
-    println!("  --json-response       prefer JSON responses where the spec allows");
+    println!("  --json-response       prefer JSON responses (requires --stateless;");
+    println!("                        legacy session mode always answers SSE)");
     println!("  --session-timeout 30m session keep-alive window");
     println!("  --default k=v         channel default for absent tool keys");
     println!("  --name N              server name reported in the handshake");
@@ -217,7 +222,8 @@ fn print_mcp_help_zh() {
     println!("                        2026-07-28）");
     println!("  --stateless           流式 HTTP 无状态模式（2026-07-28 的免");
     println!("                        握手形态，SEP-2567）");
-    println!("  --json-response       规范允许处优先 JSON 响应");
+    println!("  --json-response       优先返回 JSON（需配合 --stateless；");
+    println!("                        旧版会话模式始终走 SSE）");
     println!("  --session-timeout 30m 会话保活窗口");
     println!("  --default k=v         工具缺失键的通道默认值");
     println!("  --name N              握手中上报的服务器名");
