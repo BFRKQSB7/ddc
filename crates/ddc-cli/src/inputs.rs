@@ -38,6 +38,19 @@ pub struct Image {
     pub usize_hint: usize,
 }
 
+impl Image {
+    /// Inflated-size estimate for wave budgeting. The central directory
+    /// normally carries the exact size; for odd archives fall back to a
+    /// conservative 3x compressed range (DEX entries deflate ~2.5-3x).
+    pub fn inflated_hint(&self) -> usize {
+        if self.usize_hint > 0 {
+            self.usize_hint
+        } else {
+            self.range.len().saturating_mul(3).max(1 << 20)
+        }
+    }
+}
+
 /// Expand input paths: files pass through, directories are scanned
 /// recursively (sorted for determinism).
 pub fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -394,7 +407,7 @@ pub fn scan_prefix_needed(image: &[u8]) -> Option<usize> {
 /// Inflate each image on its own thread WITHOUT DexFile::parse — the raw
 /// bytes go straight to the caller (the browse commands run their own
 /// zero-materialization queries on them).
-pub fn inflate_images(images: Vec<Image>) -> Result<Vec<(String, Vec<u8>)>> {
+pub fn inflate_images(images: Vec<Image>) -> Result<Vec<(Image, Vec<u8>)>> {
     let mut handles = Vec::new();
     for img in images {
         let label = img.label.clone();
@@ -402,24 +415,24 @@ pub fn inflate_images(images: Vec<Image>) -> Result<Vec<(String, Vec<u8>)>> {
             label,
             std::thread::spawn(move || {
                 let raw = match img.method {
-                    ZipMethod::Stored => img.data.bytes()[img.range].to_vec(),
+                    ZipMethod::Stored => img.data.bytes()[img.range.clone()].to_vec(),
                     ZipMethod::Deflate => crate::inflate_hint(
-                        img.data.bytes()[img.range].as_ref(),
+                        img.data.bytes()[img.range.clone()].as_ref(),
                         img.usize_hint,
                     )
                     .map_err(|e| e.to_string())?,
                 };
-                Ok::<_, String>(raw)
+                Ok::<_, String>((img, raw))
             }),
         ));
     }
     let mut out = Vec::with_capacity(handles.len());
     for (name, h) in handles {
-        let raw = h
+        let (img, raw) = h
             .join()
             .map_err(|_| anyhow::anyhow!("inflate thread panicked: {}", name))?
             .map_err(|e| anyhow::anyhow!("inflate {}: {}", name, e))?;
-        out.push((name, raw));
+        out.push((img, raw));
     }
     Ok(out)
 }

@@ -21,15 +21,31 @@ pub(crate) fn for_each_image(
 ) -> Result<()> {
     let files = expand_inputs(std::slice::from_ref(input))?;
     let mut images = filter_images_by_dex(collect_images(&files)?, dex_filters)?;
-    // 自然顺序输出的分波解压：每波最多 8 个映像（内存有界），但回调顺序
-    // 与输入顺序一致——翻页契约要求可文档化的稳定序（旧实现取末尾波，
-    // 多 dex 时输出序为反向波序）。
-    const WAVE: usize = 8;
+    // 自然顺序输出的分波解压：每波最多 8 个映像，且本波解压后总量
+    // 控制在 64MB 左右（单个大映像独占一波）。回调顺序与输入顺序一致
+    // ——翻页契约要求可文档化的稳定序。固定 8 个时一波可能同时驻留
+    // 上百 MB 的 dex，查询峰值随多 dex 大包线性上升。
+    const WAVE_MAX: usize = 8;
+    const WAVE_BYTES: usize = 64 << 20;
     while !images.is_empty() {
-        let take = WAVE.min(images.len());
+        let mut take = 0usize;
+        let mut bytes = 0usize;
+        for img in &images {
+            if take >= WAVE_MAX {
+                break;
+            }
+            let hint = img.inflated_hint();
+            if take > 0 && bytes.saturating_add(hint) > WAVE_BYTES {
+                break;
+            }
+            bytes = bytes.saturating_add(hint);
+            take += 1;
+        }
+        let take = take.clamp(1, images.len());
         let wave: Vec<_> = images.drain(..take).collect();
-        for (label, raw) in inflate_images(wave)? {
-            f(&label, &raw);
+        for (img, raw) in inflate_images(wave)? {
+            f(&img.label, &raw);
+            drop(raw);
         }
     }
     Ok(())

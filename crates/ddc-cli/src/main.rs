@@ -1110,6 +1110,38 @@ unsafe fn mimalloc_sys_collect(force: bool) {
     mi_collect(force);
 }
 
+/// Single-shot query commands free one wave of inflated images at a time;
+/// mimalloc's decompiler-tuned 1s purge delay keeps every wave's buffers
+/// in thread heaps and inflates the process footprint. These commands are
+/// short-lived and allocation-bursty, so they opt into immediate purging.
+#[cfg(unix)]
+fn tune_allocator_for_streaming() {
+    extern "C" {
+        fn mi_option_set(option: std::os::raw::c_int, value: std::os::raw::c_long);
+    }
+    // mi_option_purge_delay (same id in the v2/v3 option enum).
+    const MI_OPTION_PURGE_DELAY: std::os::raw::c_int = 15;
+    unsafe { mi_option_set(MI_OPTION_PURGE_DELAY, 0) };
+}
+
+#[cfg(not(unix))]
+fn tune_allocator_for_streaming() {}
+
+fn streaming_subcommand(arg: &str) -> bool {
+    matches!(
+        arg,
+        "findrefs"
+            | "strings"
+            | "members"
+            | "hierarchy"
+            | "largest"
+            | "disasm"
+            | "callers"
+            | "res"
+            | "listclasses"
+    )
+}
+
 /// ru_maxrss peak so far, in MB — DDC_STATS phase attribution of the RSS
 /// high-water mark (which phase establishes it: raw images, pool
 /// materialization, rename registries, or the decompile loop).
@@ -1211,8 +1243,21 @@ fn main() {
     // 1s keeps segments hot across bursts without the RSS creep of a
     // longer window (lark: 1624MB at 10s vs 1523MB at 1s, same wall). User-set values
     // win.
+    // mimalloc reads MIMALLOC_* lazily on each option's first use; set the
+    // purge delay before any significant allocation. Decompile keeps 1s to
+    // survive bursty per-method IR churn; one-shot browse queries purge
+    // immediately so wave buffers do not stay resident until exit.
+    let streaming = std::env::args_os()
+        .nth(1)
+        .and_then(|s| s.into_string().ok())
+        .is_some_and(|s| streaming_subcommand(&s));
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
         std::env::set_var("MIMALLOC_PURGE_DELAY", "1000");
+    }
+    if streaming {
+        // The env var is read before main; the runtime option setter is
+        // what actually reaches mimalloc for a one-shot query process.
+        tune_allocator_for_streaming();
     }
     // `ddc ... | less` with the reader quitting closes the pipe: std
     // ignores SIGPIPE, so println! panics with "failed printing to
