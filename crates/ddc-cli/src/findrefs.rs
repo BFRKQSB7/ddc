@@ -390,16 +390,45 @@ impl<'a> RawDex<'a> {
 }
 
 pub(crate) fn decode_mutf8_lossy(b: &[u8]) -> String {
-    if b.is_ascii() {
-        // Fast path: ASCII bytes are their own MUTF-8/UTF-8 decoding.
-        unsafe { std::str::from_utf8_unchecked(b).to_string() }
-    } else {
-        String::from_utf8_lossy(b).into_owned()
+    // Standard UTF-8 first (covers ASCII and files written by tools that
+    // emit plain UTF-8); DEX string data is MUTF-8 (CESU-8), whose
+    // supplementary characters are surrogate pairs that strict UTF-8
+    // rejects — `from_utf8_lossy` would replace them with U+FFFD.
+    match std::str::from_utf8(b) {
+        Ok(s) => s.to_string(),
+        Err(_) => ddc_dex::reader::mutf8_decode_lossy(b),
     }
 }
 
 /// Normalize any of `com.poc.Main`, `com/poc/Main`, `Lcom/poc/Main;` to
 /// the slashed form.
+/// Byte needles for a text query: its UTF-8 form and, when they differ,
+/// its MUTF-8 form. DEX strings store supplementary characters as
+/// surrogate pairs, so a plain UTF-8 needle can never reach them.
+pub(crate) fn byte_needles(s: &str) -> Vec<Vec<u8>> {
+    let utf8 = s.as_bytes().to_vec();
+    let mutf8 = ddc_dex::reader::mutf8_encode(s);
+    if mutf8 == utf8 {
+        vec![utf8]
+    } else {
+        vec![utf8, mutf8]
+    }
+}
+
+/// Does `hay` contain any of the needles as a byte substring?
+pub(crate) fn bytes_contain(hay: &[u8], needles: &[Vec<u8>]) -> bool {
+    needles.iter().any(|n| memmem::find(hay, n).is_some())
+}
+
+/// `bytes_contain` for a single query string (allocates only for
+/// non-ASCII queries, i.e. never on the common path).
+pub(crate) fn bytes_contain_str(hay: &[u8], s: &str) -> bool {
+    if s.is_ascii() {
+        return memmem::find(hay, s.as_bytes()).is_some();
+    }
+    bytes_contain(hay, &byte_needles(s))
+}
+
 fn normalize_type(q: &str) -> String {
     let mut s = q.trim();
     if let Some(stripped) = s.strip_prefix('L') {
@@ -412,7 +441,7 @@ fn normalize_type(q: &str) -> String {
 
 /// Class-side match for method/field queries against a type descriptor.
 fn class_matches(type_bytes: &[u8], class: &str, fuzzy: bool) -> bool {
-    let hay = String::from_utf8_lossy(type_bytes);
+    let hay = decode_mutf8_lossy(type_bytes);
     let hay = hay.trim_start_matches('L').trim_end_matches(';');
     let needle = normalize_type(class);
     if fuzzy {
@@ -531,12 +560,16 @@ pub fn resolve_targets(dex: &RawDex, query: &FindQuery) -> (u8, BTreeSet<u32>) {
     match query {
         FindQuery::String(p) => (
             K_STRING,
-            dex.matching_strings(p.as_bytes()).into_iter().collect(),
+            byte_needles(p)
+                .iter()
+                .flat_map(|n| dex.matching_strings(n))
+                .collect(),
         ),
         FindQuery::Type(p) => (
             K_TYPE,
-            dex.matching_types(normalize_type(p).as_bytes())
-                .into_iter()
+            byte_needles(&normalize_type(p))
+                .iter()
+                .flat_map(|n| dex.matching_types(n))
                 .collect(),
         ),
         FindQuery::Method {
@@ -574,7 +607,7 @@ fn matching_members(
             dex.field_parts(idx).map(|(c, nb, _t)| (c, nb))
         };
         if let Some((class_idx, name_b)) = parts {
-            if memmem::find(name_b, name.as_bytes()).is_none() {
+            if !bytes_contain_str(name_b, name) {
                 continue;
             }
             if let Some(c) = class {
@@ -780,5 +813,26 @@ fn render_member(dex: &RawDex, idx: u32, is_method: bool) -> String {
             ),
             None => String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn byte_needles_cover_supplementary_forms() {
+        // BMP-only queries have a single encoding (UTF-8 and MUTF-8 agree).
+        assert_eq!(byte_needles("abc"), vec![b"abc".to_vec()]);
+        assert_eq!(byte_needles("中文"), vec!["中文".as_bytes().to_vec()]);
+        // Supplementary characters differ: a UTF-8 needle cannot match the
+        // surrogate-pair bytes stored in the dex string table.
+        let n = byte_needles("a\u{10000}b");
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0], "a\u{10000}b".as_bytes());
+        assert_eq!(n[1], ddc_dex::reader::mutf8_encode("a\u{10000}b"));
+        assert!(!bytes_contain(&n[1], &n[..1]), "utf8 must not match mutf8");
+        assert!(bytes_contain(&n[1], &n));
+        assert!(bytes_contain_str(&n[1], "a\u{10000}b"));
     }
 }

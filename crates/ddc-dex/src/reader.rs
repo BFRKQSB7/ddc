@@ -116,78 +116,138 @@ impl<'a> Cursor<'a> {
                 return Some(unsafe { std::str::from_utf8_unchecked(ascii).to_string() });
             }
         }
-        let mut out = String::new();
-        let mut i = pos;
-        let mut units = 0u64;
-        // Corrupt sequences degrade to U+FFFD rather than failing the file.
-        while units < utf16_len {
-            if i >= self.data.len() {
-                return None;
+        decode_mutf8_units(&self.data[pos..], Some(utf16_len))
+    }
+}
+
+/// MUTF-8 (CESU-8) decoder shared by the length-aware reader and the
+/// delimiter-bounded query path. `max_units == Some(n)` stops after `n`
+/// UTF-16 code units and returns None if the bytes run out early (dex
+/// tables are authoritative); `None` decodes to the end of the slice or
+/// the first bare NUL, which is what a raw string-table caller has.
+fn decode_mutf8_units(data: &[u8], max_units: Option<u64>) -> Option<String> {
+    let mut out = String::new();
+    let mut i = 0usize;
+    let mut units = 0u64;
+    loop {
+        if let Some(m) = max_units {
+            if units >= m {
+                break;
             }
-            let b0 = self.data[i];
-            match b0 {
-                0x00 => {
-                    // Encoded 0 is 0xC0 0x80; a bare NUL terminates the string.
-                    break;
-                }
-                0x01..=0x7f => {
-                    out.push(b0 as char);
-                    i += 1;
-                }
-                0xc0..=0xdf => {
-                    if i + 1 >= self.data.len() || (self.data[i + 1] & 0xc0) != 0x80 {
-                        out.push('\u{fffd}');
-                        i += 1;
-                    } else {
-                        let c = (((b0 & 0x1f) as u32) << 6) | ((self.data[i + 1] & 0x3f) as u32);
-                        out.push(char::from_u32(c).unwrap_or('\u{fffd}'));
-                        i += 2;
-                    }
-                }
-                0xe0..=0xef => {
-                    if i + 2 >= self.data.len()
-                        || (self.data[i + 1] & 0xc0) != 0x80
-                        || (self.data[i + 2] & 0xc0) != 0x80
-                    {
-                        out.push('\u{fffd}');
-                        i += 1;
-                    } else {
-                        let c = (((b0 & 0x0f) as u32) << 12)
-                            | (((self.data[i + 1] & 0x3f) as u32) << 6)
-                            | ((self.data[i + 2] & 0x3f) as u32);
-                        // Supplementary characters arrive as surrogate pairs.
-                        if (0xd800..0xdc00).contains(&c) {
-                            if i + 5 < self.data.len()
-                                && (self.data[i + 3] & 0xf0) == 0xe0
-                                && (self.data[i + 4] & 0xc0) == 0x80
-                                && (self.data[i + 5] & 0xc0) == 0x80
-                            {
-                                let lo = (((self.data[i + 3] & 0x0f) as u32) << 12)
-                                    | (((self.data[i + 4] & 0x3f) as u32) << 6)
-                                    | ((self.data[i + 5] & 0x3f) as u32);
-                                let cp = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00);
-                                out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
-                                i += 6;
-                                units += 2;
-                                continue;
-                            }
-                            out.push('\u{fffd}');
-                            i += 3;
-                        } else {
-                            out.push(char::from_u32(c).unwrap_or('\u{fffd}'));
-                            i += 3;
-                        }
-                    }
-                }
-                _ => {
+        }
+        if i >= data.len() {
+            return match max_units {
+                Some(_) => None,
+                None => Some(out),
+            };
+        }
+        let b0 = data[i];
+        match b0 {
+            0x00 => break,
+            0x01..=0x7f => {
+                out.push(b0 as char);
+                i += 1;
+            }
+            0xc0..=0xdf => {
+                if i + 1 >= data.len() || (data[i + 1] & 0xc0) != 0x80 {
                     out.push('\u{fffd}');
                     i += 1;
+                } else {
+                    let c = (((b0 & 0x1f) as u32) << 6) | ((data[i + 1] & 0x3f) as u32);
+                    out.push(char::from_u32(c).unwrap_or('\u{fffd}'));
+                    i += 2;
                 }
             }
-            units += 1;
+            0xe0..=0xef => {
+                if i + 2 >= data.len()
+                    || (data[i + 1] & 0xc0) != 0x80
+                    || (data[i + 2] & 0xc0) != 0x80
+                {
+                    out.push('\u{fffd}');
+                    i += 1;
+                } else {
+                    let c = (((b0 & 0x0f) as u32) << 12)
+                        | (((data[i + 1] & 0x3f) as u32) << 6)
+                        | ((data[i + 2] & 0x3f) as u32);
+                    // Supplementary characters arrive as surrogate pairs.
+                    if (0xd800..0xdc00).contains(&c) {
+                        if i + 5 < data.len()
+                            && (data[i + 3] & 0xf0) == 0xe0
+                            && (data[i + 4] & 0xc0) == 0x80
+                            && (data[i + 5] & 0xc0) == 0x80
+                        {
+                            let lo = (((data[i + 3] & 0x0f) as u32) << 12)
+                                | (((data[i + 4] & 0x3f) as u32) << 6)
+                                | ((data[i + 5] & 0x3f) as u32);
+                            let cp = 0x10000 + ((c - 0xd800) << 10) + (lo - 0xdc00);
+                            out.push(char::from_u32(cp).unwrap_or('\u{fffd}'));
+                            i += 6;
+                            units += 2;
+                            continue;
+                        }
+                        out.push('\u{fffd}');
+                        i += 3;
+                    } else {
+                        out.push(char::from_u32(c).unwrap_or('\u{fffd}'));
+                        i += 3;
+                    }
+                }
+            }
+            _ => {
+                out.push('\u{fffd}');
+                i += 1;
+            }
         }
-        Some(out)
+        units += 1;
     }
+    Some(out)
+}
+
+/// Encode a Rust string as MUTF-8 (CESU-8): BMP characters use their
+/// normal UTF-8 bytes, supplementary characters become surrogate pairs,
+/// and U+0000 becomes 0xC0 0x80. Byte-level string matching (filters,
+/// findrefs queries) needs this form to reach names/literals above the
+/// BMP — a UTF-8 needle can never match their dex encoding.
+pub fn mutf8_encode(s: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(s.len());
+    for ch in s.chars() {
+        let mut cp = ch as u32;
+        if cp == 0 {
+            out.extend_from_slice(&[0xc0, 0x80]);
+            continue;
+        }
+        if cp > 0xffff {
+            // Split into a UTF-16 surrogate pair, then encode each half.
+            cp -= 0x10000;
+            let hi = 0xd800 + (cp >> 10);
+            let lo = 0xdc00 + (cp & 0x3ff);
+            for unit in [hi, lo] {
+                out.push(0xe0 | ((unit >> 12) as u8));
+                out.push(0x80 | (((unit >> 6) & 0x3f) as u8));
+                out.push(0x80 | ((unit & 0x3f) as u8));
+            }
+            continue;
+        }
+        if cp <= 0x7f {
+            out.push(cp as u8);
+        } else if cp <= 0x7ff {
+            out.push(0xc0 | ((cp >> 6) as u8));
+            out.push(0x80 | ((cp & 0x3f) as u8));
+        } else {
+            out.push(0xe0 | ((cp >> 12) as u8));
+            out.push(0x80 | (((cp >> 6) & 0x3f) as u8));
+            out.push(0x80 | ((cp & 0x3f) as u8));
+        }
+    }
+    out
+}
+
+/// Decode MUTF-8 bytes that are already delimited (no uleb length):
+/// stops at the slice end or a bare NUL. Corrupt sequences degrade to
+/// U+FFFD. Used by the metadata query path, where the string table
+/// entry has already been sliced.
+pub fn mutf8_decode_lossy(data: &[u8]) -> String {
+    decode_mutf8_units(data, None).unwrap_or_default()
 }
 
 /// Format a MUTF-8 string like the DEX spec's uleb-terminated layout:
@@ -237,5 +297,30 @@ mod tests {
         // U+1F600 as a surrogate pair in MUTF-8.
         let bytes = [0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80];
         assert_eq!(mutf8_decode(&bytes, 2).as_deref(), Some("\u{1f600}"));
+    }
+
+    #[test]
+    fn mutf8_encode_roundtrip() {
+        // ASCII, BMP, NUL and a supplementary character.
+        for s in ["hello", "中文", "\u{0}", "\u{1f600}", "a\u{1f600}b"] {
+            let enc = mutf8_encode(s);
+            assert_eq!(mutf8_decode_lossy(&enc), s, "roundtrip {s:?}");
+        }
+        assert_eq!(mutf8_encode("\u{1f600}"), vec![0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80]);
+        assert_eq!(mutf8_encode("\u{0}"), vec![0xc0, 0x80]);
+    }
+
+    #[test]
+    fn mutf8_lossy_delimited() {
+        // Same surrogate pair without a length prefix, then a NUL terminator.
+        let bytes = [0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80, 0x00, 0x41];
+        assert_eq!(mutf8_decode_lossy(&bytes), "\u{1f600}");
+        // Encoded NUL (0xC0 0x80) is a U+0000, not a terminator.
+        assert_eq!(mutf8_decode_lossy(&[0xc0, 0x80]), "\u{0}");
+        // A lone high surrogate degrades to U+FFFD.
+        assert_eq!(
+            mutf8_decode_lossy(&[0xed, 0xa0, 0xbd, 0x41]),
+            "\u{fffd}A"
+        );
     }
 }

@@ -698,7 +698,7 @@ pub fn string_owner_counts(
         let Ok(dex) = RawDex::parse(image) else {
             return;
         };
-        let needle = filter.map(str::as_bytes);
+        let needles = filter.map(crate::findrefs::byte_needles);
         for ci in 0..dex.cls_n {
             let Some((ty, _, _, cdo, _)) = dex.class_def_parts(ci) else {
                 continue;
@@ -737,8 +737,8 @@ pub fn string_owner_counts(
                     let Some(sb) = dex.string_bytes(idx) else {
                         return;
                     };
-                    let hit = match needle {
-                        Some(f) => sb.len() >= f.len() && sb.windows(f.len()).any(|w| w == f),
+                    let hit = match &needles {
+                        Some(f) => crate::findrefs::bytes_contain(sb, f),
                         None => true,
                     };
                     if hit {
@@ -780,7 +780,7 @@ pub fn string_scan_window(
         let Ok(dex) = RawDex::parse(image) else {
             return;
         };
-        let needle = filter.map(str::as_bytes);
+        let needles = filter.map(crate::findrefs::byte_needles);
         // 单遍扫描字符串表：只保留窗口内的索引（不再为全表建 1.2M 项
         // BTreeMap——窗口查询的成本降到纯 memmem）。
         let local_lo = offset.saturating_sub(base);
@@ -795,8 +795,8 @@ pub fn string_scan_window(
             let Some(bytes) = dex.string_bytes(idx) else {
                 continue;
             };
-            let hit = match needle {
-                Some(f) => bytes.len() >= f.len() && bytes.windows(f.len()).any(|w| w == f),
+            let hit = match &needles {
+                Some(f) => crate::findrefs::bytes_contain(bytes, f),
                 None => true,
             };
             if !hit {
@@ -923,7 +923,7 @@ struct MemberFilter<'a> {
 impl MemberFilter<'_> {
     fn name_ok(&self, nb: &[u8]) -> bool {
         match self.name {
-            Some(n) => dex_match(nb, n.as_bytes()),
+            Some(n) => crate::findrefs::bytes_contain_str(nb, n),
             None => true,
         }
     }
@@ -932,7 +932,7 @@ impl MemberFilter<'_> {
         match self.class {
             None => true,
             Some(c) => {
-                let hay = String::from_utf8_lossy(cb);
+                let hay = crate::findrefs::decode_mutf8_lossy(cb);
                 let hay = hay.trim_start_matches('L').trim_end_matches(';');
                 let needle = c.replace('.', "/");
                 if self.fuzzy_class {
@@ -1119,11 +1119,6 @@ pub fn member_class_counts(
         }
     })?;
     Ok(by_name.into_iter().collect())
-}
-
-/// Case-sensitive substring match on raw MUTF-8 bytes.
-fn dex_match(nb: &[u8], needle: &[u8]) -> bool {
-    nb.len() >= needle.len() && nb.windows(needle.len()).any(|w| w == needle)
 }
 
 /// Hierarchy rows for a class (dotted or slashed `target`): its own
