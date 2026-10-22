@@ -284,15 +284,15 @@ dependencies = [
 
 [[package]]
 name = "cure-engine"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a07075dad3d5e418c05f96c01cac4a1041db3f5fdcc530973f3174850adad2e"
+checksum = "5203498f3e0ef68a2d2528743de5c99e529b74037203a1ac0b81f3c5ae358fc8"
 
 [[package]]
 name = "cure-java-ast"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c2e64381704fe2549e0c812d4e74cd977f53c5fed077fb855237db95d46daba"
+checksum = "ab9fc4b11c21e83fd5abcdda20485051d76b98e9bfb25f975a19b993956eb44e"
 dependencies = [
  "cure-engine",
  "cure-tree",
@@ -300,9 +300,9 @@ dependencies = [
 
 [[package]]
 name = "cure-java-parser"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45405bf73c7fb80d114ab714df0e0eea0f967f10019d4c0600f07c00a9c82f2d"
+checksum = "c99ce2a9d1a988bf7b8e23785799458ab7254bd9ce322285066a72693f3cac3e"
 dependencies = [
  "cure-engine",
  "cure-java-ast",
@@ -310,18 +310,18 @@ dependencies = [
 
 [[package]]
 name = "cure-java-print"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8603f881940221cd151bd820c9c14a6c2928145207c8d3802a572ecfdc7bf6f8"
+checksum = "a756d708f4c215bcf4c4e87aaad3109297bf7cfa7ca55544fbe00dd2e14ac0e8"
 dependencies = [
  "cure-java-ast",
 ]
 
 [[package]]
 name = "cure-java-simplify"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cc706da1d78633316e0cc795a9c95a98d7a7407e9bf4340473303d41f2b13c4"
+checksum = "daa0e2f46c47ccb533c48b8add9265de91a47d65cf30fabce61c5b542580d990"
 dependencies = [
  "cure-engine",
  "cure-java-ast",
@@ -329,16 +329,16 @@ dependencies = [
 
 [[package]]
 name = "cure-tree"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5576b49c44fd7a6a472b2a6211c3b5113902ba68e5a66345a4fc7b2453c13dc"
+checksum = "52ebc5d3622ca0ee276c54797165bc12184ae28f6c1ae85b0c526737b86f42f5"
 dependencies = [
  "cure-engine",
 ]
 
 [[package]]
 name = "ddc-cli"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "anyhow",
  "ddc-dec",
@@ -355,7 +355,7 @@ dependencies = [
 
 [[package]]
 name = "ddc-dec"
-version = "0.1.32"
+version = "0.1.33"
 dependencies = [
  "anyhow",
  "cure-engine",
