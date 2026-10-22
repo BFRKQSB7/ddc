@@ -140,7 +140,7 @@ in [docs/validation.md](docs/validation.md)
 | qq | 374 MB | **57.00s** | 31.96s | 2511 MB |
 
 
-Recorded 2026-10-22 with v0.1.33: one run per cell after a short settle; the previous table had mixed `--fast` timings into the full column. Peak RSS is `/usr/bin/time -l`.
+Recorded 2026-10-22 with v0.1.33: one run per cell after a short settle; the previous table was recorded on an earlier (pre-cure) version; full and `--fast` are now separate columns. Peak RSS is `/usr/bin/time -l`.
 </details>
 
 Query subcommands on the same APKs (cells: time / peak RSS;

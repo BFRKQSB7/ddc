@@ -7,7 +7,7 @@ measured after a cooldown, release profile with
 `target-cpu=native`. The benchmark harness is kept out of the published tree (local APK paths); the tables
 above are the recorded results.
 
-Recorded 2026-10-22 with v0.1.33: one run per cell after a short settle; the previous table had mixed `--fast` timings into the full column. Peak RSS is `/usr/bin/time -l`.
+Recorded 2026-10-22 with v0.1.33: one run per cell after a short settle; the previous table was recorded on an earlier (pre-cure) version; full and `--fast` are now separate columns. Peak RSS is `/usr/bin/time -l`.
 
 ## Full decompile
 
